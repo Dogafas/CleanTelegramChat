@@ -148,8 +148,8 @@ cert.key
 *.key
 
 
-
 cache
+cache.json
 client.session
 client.session-journal
 
