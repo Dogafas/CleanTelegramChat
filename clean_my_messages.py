@@ -78,7 +78,7 @@ class Cleaner:
                 message_ids = [msg.id for msg in messages]
                 try:
                     app.delete_messages(chat_id, message_ids, revoke=True)
-                    print(f"Удалено {len(message_ids)-1} сообщений из чата {chat_id}.")
+                    print(f"Удалено {len(message_ids)} сообщений из чата {chat_id}.")
                 except RPCError as e:
                     print(f"Error deleting messages in chat {chat_id}: {e}")
                 sleep(2)  # Избегаем флуд
