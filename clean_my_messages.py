@@ -7,12 +7,14 @@ import logging
 
 # Настройка логгирования
 log_filename = "app.log"
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.FileHandler(log_filename, mode='w', encoding='utf-8'),
-                        logging.StreamHandler()
-                    ])
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_filename, mode="w", encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
 
 # Настройки пути и кэша
 cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
@@ -29,6 +31,7 @@ else:
     with open(cache_path, "w") as cache_file:
         json.dump({"API_ID": API_ID, "API_HASH": API_HASH}, cache_file)
 
+
 class Cleaner:
     def __init__(self, chats=None, delete_chunk_size=100):
         self.chats = chats or []
@@ -38,14 +41,22 @@ class Cleaner:
     def get_all_chats(app):
         """Получение всех диалогов с отладочной информацией."""
         dialogs = list(app.get_dialogs(limit=1000))
-        logging.info(f"Итого у Вас доступ к {len(dialogs)} чатам, группам, каналам, ботам...")
+        logging.info(
+            f"Итого у Вас доступ к {len(dialogs)} чатам, группам, каналам, ботам..."
+        )
 
         # Фильтруем диалоги, чтобы оставить только супергруппы
-        supergroups = [dialog for dialog in dialogs if dialog.chat.type == enums.ChatType.SUPERGROUP]
+        supergroups = [
+            dialog
+            for dialog in dialogs
+            if dialog.chat.type == enums.ChatType.SUPERGROUP
+        ]
 
         # Вывод супергрупп для проверки
         for i, dialog in enumerate(supergroups):
-            logging.info(f"№ {i + 1}. Супергруппа: {dialog.chat.title} (ID: {dialog.chat.id})")
+            logging.info(
+                f"№ {i + 1}. Супергруппа: {dialog.chat.title} (ID: {dialog.chat.id})"
+            )
 
         return supergroups
 
@@ -57,18 +68,23 @@ class Cleaner:
             logging.info("Нет доступных супергрупп для выбора.")
             return
 
-        logging.info("Введите номера супергрупп для удаления сообщений (через запятую):")
+        logging.info(
+            "Введите номера супергрупп для удаления сообщений (через запятую):"
+        )
         selected_numbers = input().strip().split(",")
         selected_numbers = [int(num.strip()) for num in selected_numbers]
 
-        self.chats = [chats[num - 1].chat for num in selected_numbers if num - 1 < len(chats)]
+        self.chats = [
+            chats[num - 1].chat for num in selected_numbers if num - 1 < len(chats)
+        ]
 
         if not self.chats:
             logging.info("Не найдено супергрупп с указанными номерами.")
             return
 
-        logging.info(f"Вы выбрали для удаления сообщений в: {', '.join(chat.title for chat in self.chats)}")
-
+        logging.info(
+            f"Вы выбрали для удаления сообщений в: {', '.join(chat.title for chat in self.chats)}"
+        )
 
     def delete_messages(self, app, chat_id):
         """Удаление сообщений."""
@@ -91,12 +107,12 @@ class Cleaner:
         except RPCError as e:
             print(f"Error deleting messages in chat {chat_id}: {e}")
 
-
     def run(self, app):
         """Основной запуск."""
         for chat in self.chats:
             logging.info(f"Удаление сообщений из чата: {chat.title} (ID: {chat.id})")
             self.delete_messages(app, chat.id)
+
 
 if __name__ == "__main__":
     with Client("cleaner", api_id=API_ID, api_hash=API_HASH) as app:
