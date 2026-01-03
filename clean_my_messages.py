@@ -6,7 +6,9 @@ from pyrogram.errors import FloodWait, RPCError
 import logging
 
 # Настройка логгирования
-log_filename = "app.log"
+data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(data_dir, exist_ok=True)
+log_filename = os.path.join(data_dir, "app.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -17,7 +19,9 @@ logging.basicConfig(
 )
 
 # Настройки пути и кэша
-cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
+data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(data_dir, exist_ok=True)
+cache_path = os.path.join(data_dir, "cache.json")
 
 if os.path.exists(cache_path):
     with open(cache_path, "r") as cache_file:
@@ -115,13 +119,13 @@ class Cleaner:
 
 
 if __name__ == "__main__":
-    with Client("cleaner", api_id=API_ID, api_hash=API_HASH) as app:
+    with Client("data/cleaner", api_id=API_ID, api_hash=API_HASH) as app:
         cleaner = Cleaner()
         cleaner.select_groups_by_number(app)
         cleaner.run(app)
 
     # Удаляем файл cleaner.session после завершения работы
-    session_file = "cleaner.session"
+    session_file = os.path.join(data_dir, "cleaner.session")
     if os.path.exists(session_file):
         os.remove(session_file)
         # logging.info(f"Файл {session_file} успешно удалён.")

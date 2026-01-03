@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  clean-telegram-chat:
+    build: .
+    volumes:
+      - ./data:/app/data
+    stdin_open: true
+    tty: true
