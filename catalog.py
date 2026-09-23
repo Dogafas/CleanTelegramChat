@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -276,4 +277,10 @@ def prompt_selection(
     all_dialogs = main_dialogs + archive_dialogs
     log(f"Итого у Вас доступ к {len(all_dialogs)} чатам, группам, каналам, ботам...")  # noqa: RUF001
 
-    return select_from_dialogs(all_dialogs, ask=ask, confirm=confirm, log=log)
+    loop = getattr(app, "loop", None)
+    try:
+        return select_from_dialogs(all_dialogs, ask=ask, confirm=confirm, log=log)
+    finally:
+        # prompt_toolkit Application.run() -> asyncio.run() clears the thread loop.
+        if loop is not None and not loop.is_closed():
+            asyncio.set_event_loop(loop)

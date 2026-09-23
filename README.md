@@ -11,6 +11,7 @@
 3. Создать автономное приложение.
 4. Скопировать **app_id** и **app_hash**.
 5. (При первом запуске скрипт запросит у вас API ID и API HASH, и сохранит их в файл `.env`.)
+6. (Если серверы Telegram недоступны напрямую, допишите в уже существующий `.env`: `TELEGRAM_PROXY_SCHEME=socks5`, `TELEGRAM_PROXY_HOSTNAME`, `TELEGRAM_PROXY_PORT`. Логин и пароль — `TELEGRAM_PROXY_USERNAME` и `TELEGRAM_PROXY_PASSWORD`, только парой. Допустимые схемы: `socks5`, `socks4`, `http`. Ссылка `tg://proxy` не поддерживается.)
 
 ---
 

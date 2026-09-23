@@ -1,6 +1,7 @@
 """Runnable checks for catalog, purge and session logic. No pytest, no network."""
 
 import json
+import logging
 import tempfile
 from pathlib import Path
 
@@ -14,11 +15,12 @@ from catalog import (
     ALL_PUBLIC,
     chat_label,
     membership_catalog,
+    prompt_selection,
     resolve_selection,
     select_from_dialogs,
 )
 from purge import batch_pause, chat_pause, flood_pause, purge_chat, purge_chats
-from session import resolve_credentials
+from session import resolve_credentials, resolve_proxy, telegram_client
 
 
 class FakeChat:
@@ -165,10 +167,51 @@ def _check_select_from_dialogs():
     assert "Нет чатов для выбора." in log_none
 
 
+def _check_prompt_restores_loop():
+    import asyncio  # noqa: PLC0415
+
+    previous = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    class _Empty:
+        def __init__(self):
+            self.users = []
+            self.chats = []
+            self.messages = []
+            self.dialogs = []
+
+    class _App:
+        def get_dialogs(self):
+            return [FakeDialog(FakeChat(1, "G", type=enums.ChatType.GROUP))]
+
+        def invoke(self, *_args, **_kwargs):
+            return _Empty()
+
+    def steal(_choices):
+        asyncio.run(asyncio.sleep(0))
+        return [1]
+
+    def steal_confirm(_message):
+        asyncio.run(asyncio.sleep(0))
+        return True
+
+    app = _App()
+    app.loop = loop
+    try:
+        picked = prompt_selection(app, ask=steal, confirm=steal_confirm, log=lambda _msg: None)
+        assert [chat.id for chat in picked] == [1]
+        assert asyncio.get_event_loop() is loop
+    finally:
+        asyncio.set_event_loop(previous)
+        loop.close()
+
+
 def run_catalog_cases():
     _check_catalog_classification()
     _check_resolve_selection()
     _check_select_from_dialogs()
+    _check_prompt_restores_loop()
 
 
 # --- pauses (purge seam) ---
@@ -351,9 +394,244 @@ def run_credentials_cases():
         assert "TELEGRAM_API_HASH=new_hash" in env_e
         assert cache_path.read_text(encoding="utf-8") == cache_raw_e
 
+
+
+def _check_proxy_source_cases(tmp_path: Path) -> None:
+    # 1. No proxy keys, no file -> None, file not created
+    p1 = tmp_path / "absent.env"
+    assert resolve_proxy(p1, environ={}) is None
+    assert not p1.exists()
+
+    # 2. environ with scheme socks5, host 10.0.0.1, port 1080; .env with other host ->
+    # dict exactly {"scheme": "socks5", "hostname": "10.0.0.1", "port": 1080},
+    # file not used as source (host from file is not in result)
+    p2 = tmp_path / "file2.env"
+    p2.write_text(
+        "TELEGRAM_PROXY_SCHEME=http\n"
+        "TELEGRAM_PROXY_HOSTNAME=192.168.1.1\n"
+        "TELEGRAM_PROXY_PORT=8080\n",
+        encoding="utf-8",
+    )
+    assert resolve_proxy(
+        p2,
+        environ={
+            "TELEGRAM_PROXY_SCHEME": "socks5",
+            "TELEGRAM_PROXY_HOSTNAME": "10.0.0.1",
+            "TELEGRAM_PROXY_PORT": "1080",
+        },
+    ) == {"scheme": "socks5", "hostname": "10.0.0.1", "port": 1080}
+
+    # 3. environ empty, .env contains 5 keys -> dict with 5 fields, port int
+    p3 = tmp_path / "file3.env"
+    p3.write_text(
+        "TELEGRAM_PROXY_SCHEME=http\n"
+        "TELEGRAM_PROXY_HOSTNAME=proxy.example.com\n"
+        "TELEGRAM_PROXY_PORT=3128\n"
+        "TELEGRAM_PROXY_USERNAME=user\n"
+        "TELEGRAM_PROXY_PASSWORD=pass\n",
+        encoding="utf-8",
+    )
+    res3 = resolve_proxy(p3, environ={})
+    assert res3 == {
+        "scheme": "http",
+        "hostname": "proxy.example.com",
+        "port": 3128,
+        "username": "user",
+        "password": "pass",
+    }
+    assert isinstance(res3["port"], int)
+
+    # 4. Schemes SOCKS4 and http accepted, in lowercase in dict
+    assert resolve_proxy(
+        p1,
+        environ={
+            "TELEGRAM_PROXY_SCHEME": "SOCKS4",
+            "TELEGRAM_PROXY_HOSTNAME": "10.0.0.2",
+            "TELEGRAM_PROXY_PORT": "1080",
+        },
+    ) == {"scheme": "socks4", "hostname": "10.0.0.2", "port": 1080}
+    assert resolve_proxy(
+        p1,
+        environ={
+            "TELEGRAM_PROXY_SCHEME": "http",
+            "TELEGRAM_PROXY_HOSTNAME": "10.0.0.3",
+            "TELEGRAM_PROXY_PORT": "8080",
+        },
+    ) == {"scheme": "http", "hostname": "10.0.0.3", "port": 8080}
+
+
+def _check_proxy_validation_cases(tmp_path: Path) -> None:
+    p1 = tmp_path / "absent.env"
+
+    # 5. Scheme mtproto -> ValueError, message contains mtproto and socks5
+    try:
+        resolve_proxy(
+            p1,
+            environ={
+                "TELEGRAM_PROXY_SCHEME": "mtproto",
+                "TELEGRAM_PROXY_HOSTNAME": "10.0.0.1",
+                "TELEGRAM_PROXY_PORT": "1080",
+            },
+        )
+        raise AssertionError("mtproto should fail")
+    except ValueError as exc:
+        msg = str(exc)
+        assert "mtproto" in msg and "socks5" in msg
+
+    # 6. Host tg://proxy?server=1.2.3.4 -> ValueError about link, not dict
+    try:
+        resolve_proxy(
+            p1,
+            environ={
+                "TELEGRAM_PROXY_SCHEME": "socks5",
+                "TELEGRAM_PROXY_HOSTNAME": "tg://proxy?server=1.2.3.4",
+                "TELEGRAM_PROXY_PORT": "1080",
+            },
+        )
+        raise AssertionError("host with :// should fail")
+    except ValueError as exc:
+        assert "ссылкой" in str(exc)
+
+    # 7. Only TELEGRAM_PROXY_HOSTNAME -> ValueError about incomplete config, not None
+    try:
+        resolve_proxy(
+            p1,
+            environ={"TELEGRAM_PROXY_HOSTNAME": "10.0.0.1"},
+        )
+        raise AssertionError("incomplete proxy should fail")
+    except ValueError as exc:
+        assert "Неполная настройка прокси" in str(exc)
+
+    # 8. Username without password -> ValueError about pair
+    try:
+        resolve_proxy(
+            p1,
+            environ={
+                "TELEGRAM_PROXY_SCHEME": "socks5",
+                "TELEGRAM_PROXY_HOSTNAME": "10.0.0.1",
+                "TELEGRAM_PROXY_PORT": "1080",
+                "TELEGRAM_PROXY_USERNAME": "user_only",
+            },
+        )
+        raise AssertionError("user without pass should fail")
+    except ValueError as exc:
+        assert "Логин и пароль прокси задаются только вместе" in str(exc)
+
+    # 9. Port 0, 65536, abc -> ValueError about port
+    for bad_port in ("0", "65536", "abc"):
+        try:
+            resolve_proxy(
+                p1,
+                environ={
+                    "TELEGRAM_PROXY_SCHEME": "socks5",
+                    "TELEGRAM_PROXY_HOSTNAME": "10.0.0.1",
+                    "TELEGRAM_PROXY_PORT": bad_port,
+                },
+            )
+            raise AssertionError(f"bad port {bad_port} should fail")
+        except ValueError as exc:
+            assert "Некорректный порт прокси" in str(exc)
+            assert bad_port in str(exc)
+
+
+def _check_proxy_integration_cases(tmp_path: Path) -> None:
+    # 10. Corrupted .env (TELEGRAM_API_ID=999, no hash) with 3 valid proxy lines,
+    # valid cache.json nearby: credentials prompted, .env rewritten with new credentials
+    # and preserves same 3 proxy lines, cache.json unchanged
+    p10 = tmp_path / "env10.env"
+    p10.write_text(
+        "TELEGRAM_API_ID=999\n"
+        "TELEGRAM_PROXY_SCHEME=socks5\n"
+        "TELEGRAM_PROXY_HOSTNAME=127.0.0.1\n"
+        "TELEGRAM_PROXY_PORT=1080\n",
+        encoding="utf-8",
+    )
+    c10 = tmp_path / "cache10.json"
+    raw_c10 = json.dumps({"API_ID": 888, "API_HASH": "from_cache"})
+    c10.write_text(raw_c10, encoding="utf-8")
+    answers_10 = iter(["55", "new_hash"])
+    assert resolve_credentials(
+        p10,
+        cache=c10,
+        environ={},
+        input_fn=lambda *a, **k: next(answers_10),
+    ) == (55, "new_hash")
+    content_10 = p10.read_text(encoding="utf-8")
+    assert "TELEGRAM_API_ID=55" in content_10
+    assert "TELEGRAM_API_HASH=new_hash" in content_10
+    assert "TELEGRAM_PROXY_SCHEME=socks5" in content_10
+    assert "TELEGRAM_PROXY_HOSTNAME=127.0.0.1" in content_10
+    assert "TELEGRAM_PROXY_PORT=1080" in content_10
+    assert c10.read_text(encoding="utf-8") == raw_c10
+
+    # 11. telegram_client: factory records kwargs and yields itself as context manager.
+    # environ with both credentials and full proxy including password s3cret.
+    # env_file points to non-existent temporary path.
+    # After with, factory kwargs has proxy["hostname"] and proxy["password"] == "s3cret".
+    # Collected logging records contain host and do not contain s3cret.
+    class RecordingClientFactory:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    class ListLogHandler(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(self.format(record))
+
+    handler = ListLogHandler()
+    root_logger = logging.getLogger()
+    old_level = root_logger.level
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+    p11 = tmp_path / "non_existent.env"
+    try:
+        with telegram_client(
+            session_name="test_session",
+            client_factory=RecordingClientFactory,
+            environ={
+                "TELEGRAM_API_ID": "123",
+                "TELEGRAM_API_HASH": "hash123",
+                "TELEGRAM_PROXY_SCHEME": "socks5",
+                "TELEGRAM_PROXY_HOSTNAME": "proxy.myhost.net",
+                "TELEGRAM_PROXY_PORT": "1080",
+                "TELEGRAM_PROXY_USERNAME": "myuser",
+                "TELEGRAM_PROXY_PASSWORD": "s3cret",
+            },
+            env_file=p11,
+        ) as app:
+            assert isinstance(app, RecordingClientFactory)
+            assert app.kwargs["proxy"]["hostname"] == "proxy.myhost.net"
+            assert app.kwargs["proxy"]["password"] == "s3cret"  # noqa: S105
+
+        logged = " ".join(handler.records)
+        assert "proxy.myhost.net" in logged
+        assert "s3cret" not in logged
+    finally:
+        root_logger.removeHandler(handler)
+        root_logger.setLevel(old_level)
+
+
+def run_proxy_cases():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        _check_proxy_source_cases(tmp_path)
+        _check_proxy_validation_cases(tmp_path)
+        _check_proxy_integration_cases(tmp_path)
 run_catalog_cases()
 run_flood_case()
 run_short_batch_case()
 run_purge_chats_case()
 run_credentials_cases()
+run_proxy_cases()
 print("OK: all checks passed")

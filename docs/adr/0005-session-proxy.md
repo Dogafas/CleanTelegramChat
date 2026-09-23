@@ -1,0 +1,3 @@
+# SOCKS/HTTP proxy on the session client, not MTProto
+
+Telegram traffic for both entrypoints goes through `telegram_client`. Pyrogram 2.0.106 speaks only PySocks (`socks5`, `socks4`, `http`) via `Client(proxy=...)`. An MTProto `tg://proxy` link is rejected, not adapted. Proxy settings are optional: absent means a direct connection; any proxy key present but incomplete or invalid raises and does not fall back to direct or to the other source. Process env wins over `.env` as a whole set, never mixed. Proxy passwords are never logged. `cache.json` is not a proxy store. The tool does not prompt for a proxy.
