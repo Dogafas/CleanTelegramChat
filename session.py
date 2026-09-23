@@ -1,4 +1,3 @@
-import inspect
 import json
 import logging
 import os
@@ -29,19 +28,6 @@ def env_path() -> Path:
 
 def cache_path() -> Path:
     return Path(__file__).resolve().parent / "cache.json"
-
-
-def _ask(input_fn: Any, prompt_text: str) -> str:
-    try:
-        sig = inspect.signature(input_fn)
-        if not sig.parameters:
-            return str(input_fn())
-    except (ValueError, TypeError):
-        pass
-    try:
-        return str(input_fn(prompt_text))
-    except TypeError:
-        return str(input_fn())
 
 
 def _parse_env(content: str) -> dict[str, str]:
@@ -112,9 +98,8 @@ def resolve_credentials(
         except (json.JSONDecodeError, ValueError, TypeError, OSError):
             pass
 
-    raw_id = _ask(input_fn, "Введите ваш Telegram API ID: ")
-    api_id = int(raw_id)
-    api_hash = _ask(input_fn, "Введите ваш Telegram API HASH: ")
+    api_id = int(input_fn("Введите ваш Telegram API ID: "))
+    api_hash = str(input_fn("Введите ваш Telegram API HASH: "))
 
     _write_env(target_path, api_id, api_hash)
     return api_id, api_hash

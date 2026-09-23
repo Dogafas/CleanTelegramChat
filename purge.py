@@ -10,29 +10,13 @@ CHAT_PAUSE = (25.0, 75.0)
 FLOOD_JITTER = (1.0, 3.0)
 
 
-def _wait(e: FloodWait) -> int:
-    return int(getattr(e, "value", getattr(e, "x", 0)))
-
-
-def batch_pause(rng=random.uniform) -> float:
-    return rng(*BATCH_PAUSE)
-
-
-def chat_pause(rng=random.uniform) -> float:
-    return rng(*CHAT_PAUSE)
-
-
-def flood_pause(wait_seconds: int, rng=random.uniform) -> float:
-    return float(wait_seconds) + rng(*FLOOD_JITTER)
-
-
 def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
     previous = None
     while True:
         try:
             messages = list(app.search_messages(chat_id, from_user="me", limit=BATCH_LIMIT))
         except FloodWait as e:
-            delay = flood_pause(_wait(e), rng)
+            delay = int(e.value) + rng(*FLOOD_JITTER)
             log(f"FloodWait {delay:.0f} с, чат {chat_id}")
             sleep(delay)
             continue
@@ -53,7 +37,7 @@ def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
                 app.delete_messages(chat_id, ids, revoke=True)
                 break
             except FloodWait as e:
-                delay = flood_pause(_wait(e), rng)
+                delay = int(e.value) + rng(*FLOOD_JITTER)
                 log(f"FloodWait {delay:.0f} с, чат {chat_id}")
                 sleep(delay)
             except RPCError as e:
@@ -65,7 +49,7 @@ def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
         if len(messages) < BATCH_LIMIT:
             return
 
-        delay = batch_pause(rng)
+        delay = rng(*BATCH_PAUSE)
         log(f"Пауза {delay:.1f} с в чате {chat_id}")
         sleep(delay)
 
@@ -74,7 +58,7 @@ def purge_chats(app, chats, *, sleep, rng=random.uniform, log=print) -> None:
     # ponytail: sequential chats, pool if multi-account needed
     for i, chat in enumerate(chats):
         if i:
-            delay = chat_pause(rng)
+            delay = rng(*CHAT_PAUSE)
             log(f"Пауза {delay:.1f} с перед чатом {chat.title}")
             sleep(delay)
         log(f"Удаление сообщений из чата: {chat.title} (ID: {chat.id})")
