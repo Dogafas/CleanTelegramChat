@@ -1,5 +1,5 @@
-set filepath=%~dp0
-python -m venv %filepath%venv
-call %filepath%venv\Scripts\activate.bat
-pip install -r %filepath%requirements.txt
-echo "Successfully installed requirements!"
+@echo off
+cd /d %~dp0
+uv sync
+if errorlevel 1 exit /b 1
+echo Successfully installed requirements!

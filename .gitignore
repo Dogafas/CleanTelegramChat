@@ -152,4 +152,6 @@ cache
 cache.json
 client.session
 client.session-journal
+*.session
+*.session-journal
 
