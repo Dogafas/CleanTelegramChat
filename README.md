@@ -10,19 +10,15 @@
 2. Выбрать ссылку **API development tools**.
 3. Создать автономное приложение.
 4. Скопировать **app_id** и **app_hash**.
-5. (При первом запуске скрипт запросит у вас API ID и API HASH, и сохранит их в файл `cache.json`.)
+5. (При первом запуске скрипт запросит у вас API ID и API HASH, и сохранит их в файл `.env`.)
 
 ---
 
 ## Установка и запуск
 
-1. Скачайте проект и установите все необходимые зависимости с помощью команды:
-   ```bash
-   pip install -r requirements.txt
-
-1. Запустите скрипт:
-   python clean_my_messages.py
-- Альтернативный вариант: запустите сначала файл install.bat, а затем start.bat.
+1. Установите [uv](https://docs.astral.sh/uv/) и выполните `uv sync` (или `install.bat`).
+2. Запуск: `uv run python clean_my_messages.py` (или `start.bat`).
+3. Список участников: `uv run python people.py CHAT_ID`.
 
 ## Аутентификация
 При запуске программа потребует от вас ввести в строку **Enter phone number or bot token:** свой номер телефона в международном формате, например: +79874561122.
