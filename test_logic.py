@@ -14,12 +14,10 @@ from catalog import (
     ALL_PRIVATE,
     ALL_PUBLIC,
     chat_label,
-    membership_catalog,
     prompt_selection,
-    resolve_selection,
     select_from_dialogs,
 )
-from purge import batch_pause, chat_pause, flood_pause, purge_chat, purge_chats
+from purge import purge_chat, purge_chats
 from session import resolve_credentials, resolve_proxy, telegram_client
 
 
@@ -39,7 +37,7 @@ class FakeDialog:
 # --- catalog seam ---
 
 
-def _check_catalog_classification():
+def _check_select_catalog_classification():
     c1 = FakeChat(1, "Chat One", username="user1")
     assert chat_label(c1) == "Chat One (@user1) — 1"
     c2 = FakeChat(2, "Chat Two", username=None)
@@ -54,6 +52,8 @@ def _check_catalog_classification():
     c_channel = FakeChat(5, "Chan", username="channel_user", type=enums.ChatType.CHANNEL)
     c_private_chat = FakeChat(6, "Direct", username="direct_user", type=enums.ChatType.PRIVATE)
     c_bot = FakeChat(7, "Bot", username="bot_user", type=enums.ChatType.BOT)
+    c_basic_first = FakeChat(10, "First Basic", type=enums.ChatType.GROUP)
+    c_pub_second = FakeChat(10, "Second Pub", username="pub", type=enums.ChatType.SUPERGROUP)
 
     dialogs = [
         FakeDialog(c_pub),
@@ -63,45 +63,89 @@ def _check_catalog_classification():
         FakeDialog(c_channel),
         FakeDialog(c_private_chat),
         FakeDialog(c_bot),
+        FakeDialog(c_basic_first),
+        FakeDialog(c_pub_second),
     ]
-    pub, priv, basic = membership_catalog(dialogs)
-    assert pub == [c_pub]
-    assert priv == [c_priv_none, c_priv_empty]
-    assert basic == [c_basic]
 
-    c_basic_first = FakeChat(10, "First Basic", type=enums.ChatType.GROUP)
-    c_pub_second = FakeChat(10, "Second Pub", username="pub", type=enums.ChatType.SUPERGROUP)
-    pub_dup, priv_dup, basic_dup = membership_catalog(
-        [FakeDialog(c_basic_first), FakeDialog(c_pub_second)]
+    captured_choices = []
+
+    def fake_ask(choices):
+        captured_choices.append(choices)
+        return [ALL]
+
+    res = select_from_dialogs(dialogs, ask=fake_ask, confirm=lambda _: True, log=lambda _: None)
+    assert res == [c_pub, c_priv_none, c_priv_empty, c_basic, c_basic_first]
+
+    choices = captured_choices[0]
+    sentinel_values = {c[1] for c in choices if len(c) == 3}
+    assert {ALL, ALL_PUBLIC, ALL_PRIVATE, ALL_BASIC}.issubset(sentinel_values)
+    separators = {c[0] for c in choices if len(c) == 1}
+    assert separators == {"Публичные супергруппы", "Закрытые супергруппы", "Обычные группы"}
+
+    # Empty sections hidden
+    captured_single = []
+    select_from_dialogs(
+        [FakeDialog(c_pub)],
+        ask=lambda c: captured_single.append(c) or [c_pub.id],
+        confirm=lambda _: True,
+        log=lambda _: None,
     )
-    assert basic_dup == [c_basic_first]
-    assert pub_dup == []
-    assert priv_dup == []
+    single_choices = captured_single[0]
+    single_values = {c[1] for c in single_choices if len(c) == 3}
+    assert ALL_PUBLIC in single_values
+    assert ALL_PRIVATE not in single_values
+    assert ALL_BASIC not in single_values
+    single_separators = {c[0] for c in single_choices if len(c) == 1}
+    assert "Публичные супергруппы" in single_separators
+    assert "Закрытые супергруппы" not in single_separators
+    assert "Обычные группы" not in single_separators
 
 
-def _check_resolve_selection():
+def _check_select_resolution():
     pub_1 = FakeChat(101, "P1", username="p1", type=enums.ChatType.SUPERGROUP)
     pub_2 = FakeChat(102, "P2", username="p2", type=enums.ChatType.SUPERGROUP)
     priv_1 = FakeChat(103, "Pr1", username=None, type=enums.ChatType.SUPERGROUP)
     b_1 = FakeChat(104, "B1", type=enums.ChatType.GROUP)
     b_2 = FakeChat(105, "B2", type=enums.ChatType.GROUP)
 
-    resolved = resolve_selection(
-        [pub_1, pub_2], [priv_1], [b_1, b_2], [ALL_PUBLIC, b_1.id]
+    dialogs = [
+        FakeDialog(pub_1),
+        FakeDialog(pub_2),
+        FakeDialog(priv_1),
+        FakeDialog(b_1),
+        FakeDialog(b_2),
+    ]
+
+    r1 = select_from_dialogs(
+        dialogs, ask=lambda _: [ALL_PUBLIC, b_1.id], confirm=lambda _: True, log=lambda _: None
     )
-    assert resolved == [pub_1, pub_2, b_1]
+    assert r1 == [pub_1, pub_2, b_1]
 
-    resolved_all = resolve_selection(
-        [pub_1, pub_2], [priv_1], [b_1, b_2], [ALL]
+    r_all = select_from_dialogs(
+        dialogs, ask=lambda _: [ALL], confirm=lambda _: True, log=lambda _: None
     )
-    assert resolved_all == [pub_1, pub_2, priv_1, b_1, b_2]
+    assert r_all == [pub_1, pub_2, priv_1, b_1, b_2]
 
-    assert resolve_selection([pub_1], [], [b_1], [ALL_PRIVATE]) == []
-    assert resolve_selection([], [], [b_1], [ALL_BASIC]) == [b_1]
+    sub_dialogs = [FakeDialog(pub_1), FakeDialog(b_1)]
+    r_priv = select_from_dialogs(
+        sub_dialogs, ask=lambda _: [ALL_PRIVATE], confirm=lambda _: True, log=lambda _: None
+    )
+    assert r_priv == []
 
-    assert resolve_selection([pub_1], [priv_1], [b_1], [999, "unknown_str"]) == []
-    res_dedup = resolve_selection([pub_1, pub_2], [priv_1], [b_1], [ALL_PUBLIC, pub_1.id])
-    assert res_dedup == [pub_1, pub_2]
+    r_basic = select_from_dialogs(
+        [FakeDialog(b_1)], ask=lambda _: [ALL_BASIC], confirm=lambda _: True, log=lambda _: None
+    )
+    assert r_basic == [b_1]
+
+    r_unk = select_from_dialogs(
+        dialogs, ask=lambda _: [999, "unknown_str"], confirm=lambda _: True, log=lambda _: None
+    )
+    assert r_unk == []
+
+    r_dedup = select_from_dialogs(
+        dialogs, ask=lambda _: [ALL_PUBLIC, pub_1.id], confirm=lambda _: True, log=lambda _: None
+    )
+    assert r_dedup == [pub_1, pub_2]
 
 
 def _check_select_from_dialogs():
@@ -132,15 +176,11 @@ def _check_select_from_dialogs():
     assert result == [pub_1, b_1]
     assert len(captured_choices) == 2
 
-    first_chat_choices = [
-        c for c in captured_choices[0] if hasattr(c, "value") and isinstance(c.value, int)
-    ]
-    assert all(not getattr(c, "checked", False) for c in first_chat_choices)
+    first_chat_choices = [c for c in captured_choices[0] if len(c) == 3 and isinstance(c[1], int)]
+    assert all(not c[2] for c in first_chat_choices)
 
-    second_chat_choices = [
-        c for c in captured_choices[1] if hasattr(c, "value") and isinstance(c.value, int)
-    ]
-    second_checked_map = {c.value: getattr(c, "checked", False) for c in second_chat_choices}
+    second_chat_choices = [c for c in captured_choices[1] if len(c) == 3 and isinstance(c[1], int)]
+    second_checked_map = {c[1]: c[2] for c in second_chat_choices}
     assert second_checked_map.get(pub_1.id) is True
     assert second_checked_map.get(b_1.id) is False
 
@@ -156,6 +196,16 @@ def _check_select_from_dialogs():
     assert confirm_called == []
     assert "Ничего не выбрано." in log_empty
 
+    log_cancel = []
+    res_cancel = select_from_dialogs(
+        all_dialogs,
+        ask=lambda choices: None,
+        confirm=lambda msg: True,
+        log=log_cancel.append,
+    )
+    assert res_cancel == []
+    assert "Выбор отменён." in log_cancel
+
     log_none = []
     res_none = select_from_dialogs(
         [FakeDialog(c_channel)],
@@ -165,7 +215,6 @@ def _check_select_from_dialogs():
     )
     assert res_none == []
     assert "Нет чатов для выбора." in log_none
-
 
 def _check_prompt_restores_loop():
     import asyncio  # noqa: PLC0415
@@ -208,18 +257,10 @@ def _check_prompt_restores_loop():
 
 
 def run_catalog_cases():
-    _check_catalog_classification()
-    _check_resolve_selection()
+    _check_select_catalog_classification()
+    _check_select_resolution()
     _check_select_from_dialogs()
     _check_prompt_restores_loop()
-
-
-# --- pauses (purge seam) ---
-assert batch_pause(lambda a, b: a) == 8
-assert batch_pause(lambda a, b: b) == 25
-assert chat_pause(lambda a, b: a) == 25
-assert chat_pause(lambda a, b: b) == 75
-assert flood_pause(10, lambda a, b: a) == 11
 
 
 # --- purge_chat: FloodWait on delete, repeat batch stop ---

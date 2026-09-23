@@ -20,7 +20,7 @@ def chat_label(chat: Any) -> str:
     return f"{title} — {chat.id}"
 
 
-def membership_catalog(dialogs: Iterable[Any]) -> tuple[list[Any], list[Any], list[Any]]:
+def _membership_catalog(dialogs: Iterable[Any]) -> tuple[list[Any], list[Any], list[Any]]:
     public: list[Any] = []
     private: list[Any] = []
     basic: list[Any] = []
@@ -45,40 +45,32 @@ def membership_catalog(dialogs: Iterable[Any]) -> tuple[list[Any], list[Any], li
     return public, private, basic
 
 
-def resolve_selection(
+def _sections(
+    public: list[Any], private: list[Any], basic: list[Any]
+) -> tuple[tuple[Any, ...], ...]:
+    return (
+        (public, ALL_PUBLIC, "Все публичные", "Публичные супергруппы"),  # noqa: RUF001
+        (private, ALL_PRIVATE, "Все закрытые", "Закрытые супергруппы"),  # noqa: RUF001
+        (basic, ALL_BASIC, "Все обычные", "Обычные группы"),  # noqa: RUF001
+    )
+
+
+def _resolve_selection(
     public: list[Any],
     private: list[Any],
     basic: list[Any],
     values: Iterable[Any],
 ) -> list[Any]:
     val_set = set(values)
-    include_all = ALL in val_set
-    include_public = include_all or ALL_PUBLIC in val_set
-    include_private = include_all or ALL_PRIVATE in val_set
-    include_basic = include_all or ALL_BASIC in val_set
-
-    selected_ids = {
-        v for v in val_set if isinstance(v, int) and not isinstance(v, bool)
-    }
-
+    selected_ids = {v for v in val_set if isinstance(v, int) and not isinstance(v, bool)}
     result: list[Any] = []
     seen: set[Any] = set()
-
-    for chat in public:
-        if (include_public or chat.id in selected_ids) and chat.id not in seen:
-            seen.add(chat.id)
-            result.append(chat)
-
-    for chat in private:
-        if (include_private or chat.id in selected_ids) and chat.id not in seen:
-            seen.add(chat.id)
-            result.append(chat)
-
-    for chat in basic:
-        if (include_basic or chat.id in selected_ids) and chat.id not in seen:
-            seen.add(chat.id)
-            result.append(chat)
-
+    for chats, flag, _bulk, _label in _sections(public, private, basic):
+        include = ALL in val_set or flag in val_set
+        for chat in chats:
+            if chat.id not in seen and (include or chat.id in selected_ids):
+                seen.add(chat.id)
+                result.append(chat)
     return result
 
 
@@ -139,9 +131,15 @@ def _iter_archive(app: Any) -> Any:
 def _ask(choices: list[Any]) -> Any:
     import questionary  # noqa: PLC0415
 
+    q_choices = [
+        questionary.Separator(c[0])
+        if len(c) == 1
+        else questionary.Choice(c[0], value=c[1], checked=c[2])
+        for c in choices
+    ]
     return questionary.checkbox(
         "Отметьте чаты для удаления своих сообщений",
-        choices=choices,
+        choices=q_choices,
         instruction="Пробел — отметить, Enter — дальше",
     ).ask()
 
@@ -158,64 +156,32 @@ def _build_choices(
     basic: list[Any],
     previous_selected: set[Any],
 ) -> list[Any]:
-    import questionary  # noqa: PLC0415
-
+    # ponytail: plain tuples (title, value, checked) / (label,) avoid leaking
+    # questionary into catalog logic
+    sections = _sections(public, private, basic)
     choices: list[Any] = [
-        questionary.Choice("Все показанные", value=ALL, checked=(ALL in previous_selected)),  # noqa: RUF001
+        ("Все показанные", ALL, ALL in previous_selected),  # noqa: RUF001
     ]
-    if public:
-        choices.append(
-            questionary.Choice(
-                "Все публичные",  # noqa: RUF001
-                value=ALL_PUBLIC,
-                checked=(ALL_PUBLIC in previous_selected),
-            )
-        )
-    if private:
-        choices.append(
-            questionary.Choice(
-                "Все закрытые",  # noqa: RUF001
-                value=ALL_PRIVATE,
-                checked=(ALL_PRIVATE in previous_selected),
-            )
-        )
-    if basic:
-        choices.append(
-            questionary.Choice(
-                "Все обычные",  # noqa: RUF001
-                value=ALL_BASIC,
-                checked=(ALL_BASIC in previous_selected),
-            )
-        )
-
-    sections = [
-        (public, "Публичные супергруппы"),
-        (private, "Закрытые супергруппы"),
-        (basic, "Обычные группы"),
-    ]
-    for chats, label in sections:
+    for chats, value, bulk, _label in sections:
+        if chats:
+            choices.append((bulk, value, value in previous_selected))
+    for chats, _value, _bulk, label in sections:
         if not chats:
             continue
-        choices.append(questionary.Separator(label))
+        choices.append((label,))
         for chat in chats:
-            choices.append(
-                questionary.Choice(
-                    chat_label(chat),
-                    value=chat.id,
-                    checked=(chat.id in previous_selected),
-                )
-            )
+            choices.append((chat_label(chat), chat.id, chat.id in previous_selected))
     return choices
 
 
 def select_from_dialogs(
     dialogs: Iterable[Any],
     *,
-    ask: Callable[[list[Any]], Any],
-    confirm: Callable[[str], Any],
-    log: Callable[[str], None],
+    ask: Callable[[list[Any]], Any] = _ask,
+    confirm: Callable[[str], Any] = _confirm,
+    log: Callable[[str], None] = logging.info,
 ) -> list[Any]:
-    public, private, basic = membership_catalog(dialogs)
+    public, private, basic = _membership_catalog(dialogs)
     if not public and not private and not basic:
         log("Нет чатов для выбора.")
         return []
@@ -232,7 +198,7 @@ def select_from_dialogs(
             log("Ничего не выбрано.")
             return []
 
-        selected_chats = resolve_selection(public, private, basic, selected_values)
+        selected_chats = _resolve_selection(public, private, basic, selected_values)
         if not selected_chats:
             log("Ничего не выбрано.")
             return []
