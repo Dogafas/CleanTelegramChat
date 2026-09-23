@@ -1,15 +1,28 @@
-from pyrogram import Client
+import sys
 
-api_id = 14955062  # Замените на ваш API ID
-api_hash = "7e313794c7e74534d09b9e88bed00138"  # Замените на ваш API Hash
-chat_id = -1002413764329  # ID или username группы
+from session import telegram_client
+
+_EXPECTED_ARGS = 2  # program name + CHAT_ID
 
 
-app = Client("my_account", api_id=api_id, api_hash=api_hash)
+def main(argv: list[str]) -> int:
+    if len(argv) != _EXPECTED_ARGS:
+        print("usage: python people.py CHAT_ID", file=sys.stderr)
+        return 2
+    try:
+        chat_id = int(argv[1])
+    except ValueError:
+        print("usage: python people.py CHAT_ID", file=sys.stderr)
+        return 2
+    with telegram_client() as app:
+        for member in app.get_chat_members(chat_id):
+            user = member.user
+            print(
+                f"User ID: {user.id}, Username: {user.username}, "
+                f"Full Name: {user.first_name} {user.last_name}"
+            )
+    return 0
 
-with app:
-    members = app.get_chat_members(chat_id)
-    for member in members:
-        print(
-            f"User ID: {member.user.id}, Username: {member.user.username}, Full Name: {member.user.first_name} {member.user.last_name}"
-        )
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
