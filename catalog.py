@@ -1,10 +1,12 @@
-import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from pyrogram import enums
 from pyrogram.errors import RPCError
+
+from ui import ask_chats as _ask
+from ui import ask_confirm as _confirm
 
 ALL = "all"
 ALL_PUBLIC = "public"
@@ -128,28 +130,6 @@ def _iter_archive(app: Any) -> Any:
         offset_peer = app.resolve_peer(last_id)
 
 
-def _ask(choices: list[Any]) -> Any:
-    import questionary  # noqa: PLC0415
-
-    q_choices = [
-        questionary.Separator(c[0])
-        if len(c) == 1
-        else questionary.Choice(c[0], value=c[1], checked=c[2])
-        for c in choices
-    ]
-    return questionary.checkbox(
-        "Отметьте чаты для удаления своих сообщений",
-        choices=q_choices,
-        instruction="Пробел — отметить, Enter — дальше",
-    ).ask()
-
-
-def _confirm(message: str) -> Any:
-    import questionary  # noqa: PLC0415
-
-    return questionary.confirm(message, default=False).ask()
-
-
 def _build_choices(
     public: list[Any],
     private: list[Any],
@@ -243,10 +223,4 @@ def prompt_selection(
     all_dialogs = main_dialogs + archive_dialogs
     log(f"Итого у Вас доступ к {len(all_dialogs)} чатам, группам, каналам, ботам...")  # noqa: RUF001
 
-    loop = getattr(app, "loop", None)
-    try:
-        return select_from_dialogs(all_dialogs, ask=ask, confirm=confirm, log=log)
-    finally:
-        # prompt_toolkit Application.run() -> asyncio.run() clears the thread loop.
-        if loop is not None and not loop.is_closed():
-            asyncio.set_event_loop(loop)
+    return select_from_dialogs(all_dialogs, ask=ask, confirm=confirm, log=log)

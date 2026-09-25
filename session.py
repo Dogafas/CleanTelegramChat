@@ -1,16 +1,25 @@
+import asyncio
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from pyrogram import Client
 
+from ui import ask_confirm as _ask_confirm
+from ui import ask_select as _ask_select
+from ui import ask_text as _ask_text
+
 ENV_ID = "TELEGRAM_API_ID"
 ENV_HASH = "TELEGRAM_API_HASH"
 SESSION_NAME = "cleaner"
+SESSIONS_DIR_NAME = "sessions"
+ALL_SESSIONS = "__all_sessions__"
+CREATE_SESSION = "__create_session__"
+DELETE_SESSION = "__delete_session__"
 
 PROXY_SCHEME = "TELEGRAM_PROXY_SCHEME"
 PROXY_HOSTNAME = "TELEGRAM_PROXY_HOSTNAME"
@@ -29,6 +38,117 @@ def env_path() -> Path:
 def cache_path() -> Path:
     return Path(__file__).resolve().parent / "cache.json"
 
+
+def sessions_dir(root: Path | None = None) -> Path:
+    base = Path(__file__).resolve().parent if root is None else Path(root)
+    directory = base / SESSIONS_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def migrate_legacy_sessions(root: Path | None = None) -> list[str]:
+    base = Path(__file__).resolve().parent if root is None else Path(root)
+    dest = sessions_dir(base)
+    migrated: set[str] = set()
+    for p in base.glob("*.session"):
+        if p.is_file():
+            p.replace(dest / p.name)
+            migrated.add(p.stem)
+            journal = p.with_name(f"{p.name}-journal")
+            if journal.is_file():
+                journal.replace(dest / journal.name)
+    return sorted(migrated)
+
+
+def list_sessions(root: Path | None = None) -> list[str]:
+    migrate_legacy_sessions(root)
+    dest = sessions_dir(root)
+    return sorted(p.stem for p in dest.glob("*.session") if p.is_file())
+
+
+def delete_session(name: str, root: Path | None = None) -> bool:
+    dest = sessions_dir(root)
+    session_file = dest / f"{name}.session"
+    journal_file = dest / f"{name}.session-journal"
+    if session_file.is_file():
+        session_file.unlink()
+        if journal_file.is_file():
+            journal_file.unlink()
+        return True
+    return False
+
+
+def _is_valid_session_name(name: str) -> bool:
+    # ponytail: forbid path separators and control chars
+    return bool(name) and not any(
+        ch in name for ch in ("/", "\\", "\0", ":", "*", "?", '"', "<", ">", "|")
+    )
+
+
+def _prompt_new_session(ask_text: Callable[..., Any], existing: list[str]) -> str | None:
+    while True:
+        raw_name = ask_text("Введите имя новой сессии: ")
+        if raw_name is None:
+            return None
+        name = raw_name.strip()
+        if not name:
+            return None
+        if not _is_valid_session_name(name) or name in existing:
+            continue
+        return name
+
+
+CANCEL_SESSION = "__cancel_session__"
+
+
+def _handle_delete_session(
+    root: Path | None,
+    existing: list[str],
+    ask_select: Callable[..., Any],
+    ask_confirm: Callable[..., Any],
+) -> None:
+    del_choices = [(s, s) for s in existing] + [("Отмена", CANCEL_SESSION)]
+    to_delete = ask_select("Выберите сессию для удаления:", del_choices)
+    if to_delete not in (None, CANCEL_SESSION) and ask_confirm(
+        f"Точно удалить сессию '{to_delete}'?", default=False
+    ):
+        delete_session(to_delete, root)
+
+
+def prompt_sessions(
+    root: Path | None = None,
+    *,
+    ask_select: Callable[..., Any] = _ask_select,
+    ask_text: Callable[..., Any] = _ask_text,
+    ask_confirm: Callable[..., Any] = _ask_confirm,
+) -> list[str]:
+    while True:
+        existing = list_sessions(root)
+        if not existing:
+            name = _prompt_new_session(ask_text, existing)
+            return [name] if name else []
+
+        choices: list[Any] = []
+        if len(existing) > 1:
+            choices.append(("Все сессии", ALL_SESSIONS))  # noqa: RUF001
+        for s in existing:
+            choices.append((s, s))
+        choices.append(("+ Создать новую сессию", CREATE_SESSION))
+        choices.append(("- Удалить сессию", DELETE_SESSION))
+
+        choice = ask_select("Выберите сессию для работы:", choices)
+        if choice is None:
+            return []
+        if choice == ALL_SESSIONS:
+            return existing
+        if choice in existing:
+            return [choice]
+        if choice == CREATE_SESSION:
+            name = _prompt_new_session(ask_text, existing)
+            if name:
+                return [name]
+        elif choice == DELETE_SESSION:
+            _handle_delete_session(root, existing, ask_select, ask_confirm)
 
 def _parse_env(content: str) -> dict[str, str]:
     data: dict[str, str] = {}
@@ -175,19 +295,42 @@ def resolve_proxy(
 
 @contextmanager
 def telegram_client(
-    session_name: str = SESSION_NAME,
+    session_name: str,
     *,
+    workdir: Path | str | None = None,
     client_factory: Any = Client,
     environ: Mapping[str, str] = os.environ,
     env_file: Path | str | None = None,
 ):
     api_id, api_hash = resolve_credentials(env_file, environ=environ)
     proxy = resolve_proxy(env_file, environ=environ)
+    # Python 3.12+ / questionary: prompt_toolkit's asyncio.run() clears the thread
+    # loop; Pyrogram 2.0.106 Dispatcher still calls get_event_loop(). This module
+    # owns loop hygiene: ensure a loop exists for the client, restore the original
+    # after the block so the next session starts clean.
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    target_workdir = str(workdir) if workdir is not None else str(sessions_dir())
     if proxy is None:
         logging.info("Прямое соединение с Telegram.")
     else:
         logging.info(
             f"Соединение с Telegram через прокси {proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
         )
-    with client_factory(session_name, api_id=api_id, api_hash=api_hash, proxy=proxy) as app:
-        yield app
+    try:
+        with client_factory(
+            session_name,
+            api_id=api_id,
+            api_hash=api_hash,
+            proxy=proxy,
+            workdir=target_workdir,
+        ) as app:
+            yield app
+    finally:
+        if loop.is_closed():
+            asyncio.set_event_loop(asyncio.new_event_loop())
+        else:
+            asyncio.set_event_loop(loop)

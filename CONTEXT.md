@@ -39,3 +39,15 @@ _Avoid_: chunk, pack, slice
 **Telegram Session**:
 Персистентное состояние авторизации клиента (файлы сессии и API-ключи), обеспечивающее доступ к Telegram без повторного прохождения двухфакторной аутентификации.
 _Avoid_: auth cache, token, credentials
+
+**Session Directory**:
+Выделенная папка `sessions/` в корне проекта для хранения персистентных файлов сессий Telegram (`*.session`).
+_Avoid_: session folder, accounts dir
+
+**Session Name**:
+Идентификатор сессии (имя файла без расширения `.session`), задаваемый пользователем.
+_Avoid_: account id, login
+
+**All Sessions**:
+Режим последовательной пакетной очистки сообщений во всех сессиях из `Session Directory`.
+_Avoid_: batch all, multi session

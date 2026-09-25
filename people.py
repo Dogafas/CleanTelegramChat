@@ -1,20 +1,22 @@
 import sys
 
-from session import telegram_client
+from session import SESSION_NAME, telegram_client
 
-_EXPECTED_ARGS = 2  # program name + CHAT_ID
+_MIN_ARGS = 2
+_MAX_ARGS = 3
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != _EXPECTED_ARGS:
-        print("usage: python people.py CHAT_ID", file=sys.stderr)
+    if len(argv) < _MIN_ARGS or len(argv) > _MAX_ARGS:
+        print("usage: python people.py CHAT_ID [SESSION_NAME]", file=sys.stderr)
         return 2
     try:
         chat_id = int(argv[1])
     except ValueError:
-        print("usage: python people.py CHAT_ID", file=sys.stderr)
+        print("usage: python people.py CHAT_ID [SESSION_NAME]", file=sys.stderr)
         return 2
-    with telegram_client() as app:
+    session_name = argv[2] if len(argv) >= _MAX_ARGS else SESSION_NAME
+    with telegram_client(session_name=session_name) as app:
         for member in app.get_chat_members(chat_id):
             user = member.user
             print(
