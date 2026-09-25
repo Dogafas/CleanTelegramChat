@@ -1,0 +1,3 @@
+# Membership catalog, not a chat config
+
+The picker lists every dialog the account still belongs to, including the archive folder, in three sections: public supergroups (username), private supergroups (no username), and basic groups. Channels, private chats, bots, and left chats are absent. Left chats stay absent because channels.deleteMessages returns CHANNEL_PRIVATE until the account rejoins, and this tool does not rejoin. questionary checkboxes are the only selector. Four sentinels union with hand-picked rows at submit time; a row cannot be excluded from a sentinel on that screen. Empty sections are hidden. N on confirm returns to the same checkboxes without refetching.

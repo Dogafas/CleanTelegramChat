@@ -1,3 +1,6 @@
-pyaes==1.6.1
-Pyrogram==2.0.106
-PySocks==1.7.1
+# Зеркало [project].dependencies из pyproject.toml — для запуска без uv (pip install -r requirements.txt)
+pyrogram==2.0.106
+questionary>=2.1.1
+
+# Ускоряет шифрование Telegram (опционально, без него работает медленнее):
+# pip install tgcrypto
