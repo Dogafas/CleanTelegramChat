@@ -19,6 +19,7 @@ from session import (
     prompt_sessions,
     resolve_credentials,
     resolve_proxy,
+    restore_client_loop,
     sessions_dir,
     telegram_client,
 )
@@ -607,6 +608,28 @@ class TelegramClientTests(unittest.TestCase):
             self.assertFalse(restored.is_closed())
         finally:
             asyncio.set_event_loop(old_loop)
+
+    def test_restore_client_loop(self):
+        old_loop = asyncio.get_event_loop()
+        try:
+            client_loop = asyncio.new_event_loop()
+            app = type("FakeApp", (), {"loop": client_loop})()
+
+            # Симулируем вопросary: thread loop подменён и закрыт
+            stolen = asyncio.new_event_loop()
+            stolen.close()
+            asyncio.set_event_loop(stolen)
+
+            restore_client_loop(app)
+            self.assertIs(asyncio.get_event_loop(), client_loop)
+
+            # app без loop / с закрытым loop — не падает, ставит рабочий loop
+            restore_client_loop(object())
+            restore_client_loop(type("FakeApp2", (), {"loop": stolen})())
+            self.assertFalse(asyncio.get_event_loop().is_closed())
+        finally:
+            asyncio.set_event_loop(old_loop)
+            client_loop.close()
 
 
 if __name__ == "__main__":

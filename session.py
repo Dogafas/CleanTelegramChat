@@ -293,6 +293,17 @@ def resolve_proxy(
     return proxy
 
 
+def restore_client_loop(app: Any) -> None:
+    """prompt_toolkit (questionary) подменяет thread loop через asyncio.run().
+
+    Синхронные вызовы Pyrogram и client.stop() требуют loop клиента —
+    вызывайте после любых промптов внутри блока telegram_client.
+    """
+    loop = getattr(app, "loop", None)
+    if loop is not None and not loop.is_closed():
+        asyncio.set_event_loop(loop)
+
+
 @contextmanager
 def telegram_client(
     session_name: str,
