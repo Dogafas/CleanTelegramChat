@@ -2,10 +2,11 @@
 name = "clean-telegram-chat"
 version = "0.1.0"
 description = "Delete your own messages from Telegram supergroups"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-    "pyrogram==2.0.106",
+    "kurigram>=2.2.26",
     "questionary>=2.1.1",
+    "typesafe-sdk>=0.7",
 ]
 
 [tool.uv]
@@ -19,7 +20,7 @@ line-length = 100
 target-version = "py39"
 
 [tool.ruff.lint]
-allowed-confusables = ["с", "а", "е", "о", "р", "х"]  # кириллица в русских строках логов
+allowed-confusables = ["с", "а", "е", "о", "р", "х", "у", "г", "б", "д", "в", "к", "м", "н", "п", "т", "ф", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "В", "С"]  # кириллица в русских строках/комментариях
 select = [
     "E", "F", "W",           # pycodestyle/pyflakes
     "I",                     # isort

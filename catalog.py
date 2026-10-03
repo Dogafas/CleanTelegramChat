@@ -51,9 +51,9 @@ def _sections(
     public: list[Any], private: list[Any], basic: list[Any]
 ) -> tuple[tuple[Any, ...], ...]:
     return (
-        (public, ALL_PUBLIC, "Все публичные", "Публичные супергруппы"),  # noqa: RUF001
-        (private, ALL_PRIVATE, "Все закрытые", "Закрытые супергруппы"),  # noqa: RUF001
-        (basic, ALL_BASIC, "Все обычные", "Обычные группы"),  # noqa: RUF001
+        (public, ALL_PUBLIC, "Все публичные", "Публичные супергруппы"),
+        (private, ALL_PRIVATE, "Все закрытые", "Закрытые супергруппы"),
+        (basic, ALL_BASIC, "Все обычные", "Обычные группы"),
     )
 
 
@@ -140,7 +140,7 @@ def _build_choices(
     # questionary into catalog logic
     sections = _sections(public, private, basic)
     choices: list[Any] = [
-        ("Все показанные", ALL, ALL in previous_selected),  # noqa: RUF001
+        ("Все показанные", ALL, ALL in previous_selected),
     ]
     for chats, value, bulk, _label in sections:
         if chats:
@@ -221,6 +221,6 @@ def prompt_selection(
         return []
 
     all_dialogs = main_dialogs + archive_dialogs
-    log(f"Итого у Вас доступ к {len(all_dialogs)} чатам, группам, каналам, ботам...")  # noqa: RUF001
+    log(f"Итого у Вас доступ к {len(all_dialogs)} чатам, группам, каналам, ботам...")
 
     return select_from_dialogs(all_dialogs, ask=ask, confirm=confirm, log=log)

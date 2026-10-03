@@ -25,7 +25,10 @@ def ask_confirm(message: str, default: bool = False) -> bool:
     return questionary.confirm(message, default=default).ask()
 
 
-def ask_chats(choices: list[Any]) -> Any:
+def ask_chats(
+    choices: list[Any],
+    message: str = "Отметьте чаты для удаления своих сообщений",
+) -> Any:
     import questionary  # noqa: PLC0415
 
     q_choices = [
@@ -35,7 +38,7 @@ def ask_chats(choices: list[Any]) -> Any:
         for c in choices
     ]
     return questionary.checkbox(
-        "Отметьте чаты для удаления своих сообщений",
+        message,
         choices=q_choices,
         instruction="Пробел — отметить, Enter — дальше",
     ).ask()

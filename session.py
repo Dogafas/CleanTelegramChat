@@ -28,6 +28,9 @@ PROXY_USERNAME = "TELEGRAM_PROXY_USERNAME"
 PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"  # noqa: S105
 PROXY_KEYS = (PROXY_SCHEME, PROXY_HOSTNAME, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD)
 PROXY_SCHEMES = ("socks5", "socks4", "http")
+# Jev/TypeSafe (verdict.py): ключ и опциональные endpoint/model — переживают rewrite .env
+TYPESAFE_KEYS = ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TYPESAFE_DEFAULT_MODEL")
+SORT_KEYS = ("CATEGORIES_FILE",)
 _MAX_PORT = 65535
 
 
@@ -118,6 +121,7 @@ def _handle_delete_session(
 def prompt_sessions(
     root: Path | None = None,
     *,
+    allow_all: bool = True,
     ask_select: Callable[..., Any] = _ask_select,
     ask_text: Callable[..., Any] = _ask_text,
     ask_confirm: Callable[..., Any] = _ask_confirm,
@@ -129,8 +133,8 @@ def prompt_sessions(
             return [name] if name else []
 
         choices: list[Any] = []
-        if len(existing) > 1:
-            choices.append(("Все сессии", ALL_SESSIONS))  # noqa: RUF001
+        if allow_all and len(existing) > 1:
+            choices.append(("Все сессии", ALL_SESSIONS))
         for s in existing:
             choices.append((s, s))
         choices.append(("+ Создать новую сессию", CREATE_SESSION))
@@ -166,7 +170,7 @@ def _parse_env(content: str) -> dict[str, str]:
             and v not in ('"', "'")
         ):
             v = v[1:-1]
-        if k in (ENV_ID, ENV_HASH, *PROXY_KEYS):
+        if k in (ENV_ID, ENV_HASH, *PROXY_KEYS, *TYPESAFE_KEYS, *SORT_KEYS):
             data[k] = v
     return data
 
@@ -178,7 +182,7 @@ def _write_env(path: Path, api_id: int, api_hash: str) -> None:
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{ENV_ID}={api_id}", f"{ENV_HASH}={api_hash}"]
-    for key in PROXY_KEYS:
+    for key in (*PROXY_KEYS, *TYPESAFE_KEYS, *SORT_KEYS):
         if key in existing_data:
             lines.append(f"{key}={existing_data[key]}")
     content = "\n".join(lines) + "\n"

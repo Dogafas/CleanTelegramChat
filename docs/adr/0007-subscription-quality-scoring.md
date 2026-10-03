@@ -1,0 +1,9 @@
+# Local metric scoring gates candidates; Jev judges only candidates
+
+Superseded in part by ADR 0009: Jev runs on every subscription with post text, and a text fail adds a candidate. The metric layer below is unchanged.
+
+Channel quality is scored in two layers. Layer 1 is fully local and deterministic: nine Quality Metrics computed from a dump of the last 30 posts plus the channel card (ERR, ER, views coefficient of variation, ad-post share, external link density, comments/reactions imbalance, forwards per post, posting frequency, dots/SEO in title), each normalized to 0–100 and summed with weights; hard flags (CV < 0.15, ERR > 100%) cap the Quality Score at 30. Channels below the candidate threshold (default 60) or with a hard flag become Unsubscribe Candidates. Layer 2 is Jev (TypeSafe System One model) invoked only for candidates: Choice over content types, three Noul checks (paid ads, clickbait, emotional pressure), and a 0–100 usefulness Score, returned with the score breakdown as the Verdict.
+
+Why not Jev on every channel: metrics already separate the obvious (dead, inflated, ad showcases) deterministically and for free; running the model on all channels multiplies cost and latency for no gain on easy cases. Why not metrics-only: ad/course/clickbait content is a property of text, not numbers — the niche and tone context needs a model, and the user reads the Verdict before confirming mass-unsubscribe. External analytics APIs (Telemetr, TGStat) were rejected for the first version: paid (from 1900/2100 RUB/month) and their unique value (true ERR, subscriber growth history, bot share) is covered adequately by the local proxies plus re-pollable snapshots; an adapter can be added later without changing the seams.
+
+Alternatives rejected: full-auto unsubscribe by score alone (irreversible action on a false positive); Telemetr-only scoring (vendor lock, quota limits on channel-uniqueness).

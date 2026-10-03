@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+import session
 from session import (
     ALL_SESSIONS,
     CANCEL_SESSION,
@@ -33,6 +34,22 @@ class ResolveCredentialsTests(unittest.TestCase):
         self.env_path = self.tmp_path / ".env"
         self.cache_path = self.tmp_path / "cache.json"
 
+    def test_write_env_preserves_typesafe_keys(self):
+        self.env_path.write_text(
+            "TYPESAFE_API_KEY=sk-or-test\nTYPESAFE_BASE_URL=https://openrouter.ai/api\nCATEGORIES_FILE=cats.txt\n",
+            encoding="utf-8",
+        )
+        session._write_env(self.env_path, 1, "hash")
+        content = self.env_path.read_text(encoding="utf-8")
+        self.assertIn("TYPESAFE_API_KEY=sk-or-test", content)
+        self.assertIn("TYPESAFE_BASE_URL=https://openrouter.ai/api", content)
+        self.assertIn("CATEGORIES_FILE=cats.txt", content)
+
+    def test_parse_env_reads_typesafe_and_sort_keys(self):
+        raw = "TYPESAFE_API_KEY=abc\nCATEGORIES_FILE=my.txt\nTELEGRAM_API_ID=1\n"
+        data = session._parse_env(raw)
+        self.assertEqual(data["TYPESAFE_API_KEY"], "abc")
+        self.assertEqual(data["CATEGORIES_FILE"], "my.txt")
     def test_all_sources(self):
         env_path, cache_path = self.env_path, self.cache_path
 
@@ -488,6 +505,23 @@ class PromptSessionsTests(unittest.TestCase):
         res = prompt_sessions(root, ask_select=lambda _msg, _choices: ALL_SESSIONS)
         self.assertEqual(res, ["acc1", "acc2"])
 
+    def test_select_allow_all_false(self):
+        root = self.tmp_path / "prompt_no_all_root"
+        sdir = sessions_dir(root)
+        (sdir / "acc1.session").write_text("1", encoding="utf-8")
+        (sdir / "acc2.session").write_text("2", encoding="utf-8")
+
+        passed_choices: list[Any] = []
+
+        def fake_select(_msg: str, choices: list[Any]) -> Any:
+            passed_choices.extend(choices)
+            return "acc1"
+
+        res = prompt_sessions(root, allow_all=False, ask_select=fake_select)
+        self.assertEqual(res, ["acc1"])
+        self.assertNotIn(("Все сессии", ALL_SESSIONS), passed_choices)
+        self.assertIn(("acc1", "acc1"), passed_choices)
+        self.assertIn(("acc2", "acc2"), passed_choices)
     def test_create_and_delete_flows(self):
         root = self.tmp_path / "prompt_create_del_root"
         sdir = sessions_dir(root)

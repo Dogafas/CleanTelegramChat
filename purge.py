@@ -10,13 +10,18 @@ CHAT_PAUSE = (25.0, 75.0)
 FLOOD_JITTER = (1.0, 3.0)
 
 
+def flood_delay(e, rng=random.uniform):
+    """Задержка FloodWait: секунды сервера + джиттер."""
+    return int(e.value) + rng(*FLOOD_JITTER)
+
+
 def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
     previous = None
     while True:
         try:
             messages = list(app.search_messages(chat_id, from_user="me", limit=BATCH_LIMIT))
         except FloodWait as e:
-            delay = int(e.value) + rng(*FLOOD_JITTER)
+            delay = flood_delay(e, rng)
             log(f"FloodWait {delay:.0f} с, чат {chat_id}")
             sleep(delay)
             continue
@@ -37,7 +42,7 @@ def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
                 app.delete_messages(chat_id, ids, revoke=True)
                 break
             except FloodWait as e:
-                delay = int(e.value) + rng(*FLOOD_JITTER)
+                delay = flood_delay(e, rng)
                 log(f"FloodWait {delay:.0f} с, чат {chat_id}")
                 sleep(delay)
             except RPCError as e:
