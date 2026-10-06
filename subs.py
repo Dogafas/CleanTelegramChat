@@ -63,10 +63,10 @@ def fetch_creation_date(app: Any, chat_id: int) -> Any:
     """Дата создания канала: первое сообщение (id=1)."""
     try:
         msg = app.get_messages(chat_id, 1)
-        if msg and getattr(msg, "date", None) and not getattr(msg, "empty", False):
-            return msg.date
     except Exception:
-        pass
+        return None
+    if msg and getattr(msg, "date", None) and not getattr(msg, "empty", False):
+        return msg.date
     return None
 
 
@@ -140,12 +140,17 @@ def compute_metrics(
             ref_dt = max(valid_dates, default=None)
             if ref_dt is not None:
                 diff = ref_dt - created_at
-                sec = diff.total_seconds() if hasattr(diff, "total_seconds") else float(diff) * 86400
+                sec = (
+                    diff.total_seconds()
+                    if hasattr(diff, "total_seconds")
+                    else float(diff) * 86400
+                )
                 age_days = round(max(sec / 86400.0, 0.0), 1)
                 age_months = max(age_days / 30.44, 0.1)
                 growth_per_month = round(members / age_months, 1)
         except Exception:
-            pass
+            age_days = None
+            growth_per_month = None
 
     return {
         "err": round(err, 2),
@@ -239,7 +244,9 @@ def score_channel(m: dict[str, Any], t: dict[str, Any] | None = None) -> dict[st
     ):
         years = age / 365.25
         flags.append(
-            f"заброшенный канал (возраст {years:.1f} г., {m['posts_per_month']:.1f} постов/мес при ERR < {t['err_bad']}%)"
+            "заброшенный канал "
+            f"(возраст {years:.1f} г., {m['posts_per_month']:.1f} постов/мес "
+            f"при ERR < {t['err_bad']}%)"
         )
     if flags:
         score = min(score, 30)

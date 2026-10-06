@@ -1,0 +1,5 @@
+#!/bin/sh
+status=0
+uv run ruff check || status=1
+uv run python -m unittest discover tests || status=1
+exit "$status"

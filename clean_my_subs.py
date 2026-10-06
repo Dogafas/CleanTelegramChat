@@ -51,7 +51,10 @@ def scan_channels(app: Any, log: Callable[[str], None], rng=random.uniform) -> l
         result = score_channel(metrics)
         growth_str = ""
         if metrics.get("growth_per_month") is not None:
-            growth_str = f" | возраст: {metrics['age_days']:.0f}д (~{metrics['growth_per_month']:.0f} суб/мес)"
+            growth_str = (
+                f" | возраст: {metrics['age_days']:.0f}д"
+                f" (~{metrics['growth_per_month']:.0f} суб/мес)"
+            )
         flags_note = f" | ФЛАГИ: {'; '.join(result['flags'])}" if result["flags"] else ""
         log(
             f"{chat_label(chat)} — скор {result['score']}/100{growth_str}"
@@ -75,6 +78,36 @@ def _choices(candidates: list[dict[str, Any]]) -> list[Any]:
         title = f"{chat_label(c['chat'])} — скор {c['score']}/100{suffix}"
         rows.append((title, c["chat"], checked))
     return rows
+
+def _channel_description(row: dict[str, Any]) -> str:
+    chat = row["chat"]
+    return row.get("description") or getattr(chat, "description", None) or ""
+
+
+def _ask_verdict(evaluate_fn: Callable[..., Any], row: dict[str, Any]) -> Any:
+    desc = _channel_description(row)
+    title, posts = row["chat"].title, row["posts"]
+    try:
+        return evaluate_fn(title, posts, description=desc)
+    except TypeError:
+        return evaluate_fn(title, posts)
+
+
+def _attach_verdicts(
+    scanned: list[dict[str, Any]],
+    evaluate_fn: Callable[..., Any],
+    log: Callable[[str], None],
+) -> None:
+    for row in scanned:
+        if not has_text(row["posts"]):
+            row["verdict"] = None
+            continue
+        log(f"Запрос вердикта LLM: {row['chat'].title}")
+        try:
+            row["verdict"] = _ask_verdict(evaluate_fn, row)
+        except Exception:
+            logging.exception("Вердикт не удался, канал без вердикта")
+            row["verdict"] = {"error": "см. traceback в логе"}
 
 
 def clean_subscriptions(
@@ -101,22 +134,7 @@ def clean_subscriptions(
                 scanned = scan(app, log)
                 if not scanned:
                     continue
-                for c in scanned:
-                    if has_text(c["posts"]):
-                        log(f"Запрос вердикта LLM: {c['chat'].title}")
-                        try:
-                            desc = c.get("description") or getattr(c["chat"], "description", None) or ""
-                            try:
-                                c["verdict"] = evaluate_fn(
-                                    c["chat"].title, c["posts"], description=desc
-                                )
-                            except TypeError:
-                                c["verdict"] = evaluate_fn(c["chat"].title, c["posts"])
-                        except Exception:
-                            logging.exception("Вердикт не удался, канал без вердикта")
-                            c["verdict"] = {"error": "см. traceback в логе"}
-                    else:
-                        c["verdict"] = None
+                _attach_verdicts(scanned, evaluate_fn, log)
                 candidates = [
                     c
                     for c in scanned

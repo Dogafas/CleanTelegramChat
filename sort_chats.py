@@ -581,7 +581,7 @@ def create_folders(
                 resolved_peers.append(peer)
             except Exception as e:
                 title = getattr(chat, "title", None) or "без названия"
-                log(f"Не удалось добавить {title} \u2014 {chat.id} во вкладку «{name}»: {e}")  # noqa: RUF001
+                log(f"Не удалось добавить {title} — {chat.id} во вкладку «{name}»: {e}")
                 unresolved_count += 1
 
         if not resolved_peers:

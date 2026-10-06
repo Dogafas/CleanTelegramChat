@@ -11,10 +11,11 @@ from pyrogram import enums
 from pyrogram.errors import FloodWait
 
 import clean_my_subs
-from subs import compute_metrics, fetch_creation_date, score_channel
 import subs
 import verdict
+from subs import compute_metrics, fetch_creation_date, score_channel
 from verdict import QUESTIONS, choice_suffix, text_reasons, verdict_label
+
 
 class _Date:
     def __init__(self, day: int) -> None:
@@ -172,8 +173,9 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual([c.id for c in subs.channel_subscriptions(app)], [1])
     def test_scan_channels_extracts_description(self):
         full_chat = Chat(members_count=100, description="Био канала")
+        channel = Chat(id=1, type=enums.ChatType.CHANNEL, title="Канал")
         app = Chat(
-            get_dialogs=lambda limit: [Chat(chat=Chat(id=1, type=enums.ChatType.CHANNEL, title="Канал"))],
+            get_dialogs=lambda limit: [Chat(chat=channel)],
             get_chat=lambda cid: full_chat,
             get_chat_history=lambda cid, limit: [_post()],
             get_messages=lambda cid, mid: None,
