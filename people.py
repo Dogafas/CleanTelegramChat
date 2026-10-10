@@ -1,4 +1,5 @@
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -30,23 +31,31 @@ def _resolve(app, chat_id: int):
     return None, None
 
 
+def _csv_safe(cell: str) -> str:
+    """Prefix formula-triggering cells so Excel doesn't execute them."""
+    return f"'{cell}" if cell.startswith(("=", "+", "-", "@", "\t")) else cell
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < _MIN_ARGS or len(argv) > _MAX_ARGS:
         print("usage: python people.py CHAT_ID|@username [SESSION_NAME]", file=sys.stderr)
         return 2
     chat_arg = argv[1]
     session_name = argv[2] if len(argv) >= _MAX_ARGS else SESSION_NAME
+    chat_id: int | None = None
+    if not chat_arg.startswith("@"):
+        # Validate before the client opens so usage errors don't touch the network.
+        try:
+            chat_id = int(chat_arg)
+        except ValueError:
+            print("usage: python people.py CHAT_ID|@username [SESSION_NAME]", file=sys.stderr)
+            return 2
     with telegram_client(session_name=session_name) as app:
         # Usernames resolve directly; raw IDs may need cache warm + -100 prefix.
-        if chat_arg.startswith("@"):
+        if chat_id is None:
             chat = app.get_chat(chat_arg)
             chat_id = chat.id
         else:
-            try:
-                chat_id = int(chat_arg)
-            except ValueError:
-                print("usage: python people.py CHAT_ID|@username [SESSION_NAME]", file=sys.stderr)
-                return 2
             chat_id, chat = _resolve(app, chat_id)
             if chat is None:
                 print(
@@ -55,7 +64,8 @@ def main(argv: list[str]) -> int:
                     file=sys.stderr,
                 )
                 return 1
-        title = (chat.title or "").replace(" ", "_").strip("_") or str(chat_id)
+        raw_title = getattr(chat, "title", None) or ""
+        title = re.sub(r"[^\w.-]+", "_", raw_title).strip("_") or str(chat_id)
         out_name = f"people_{title}_{chat_id}.csv"
         with Path(out_name).open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
@@ -65,8 +75,14 @@ def main(argv: list[str]) -> int:
                 user = member.user
                 username = user.username or ""
                 link = f"https://t.me/{username}" if username else f"tg://user?id={user.id}"
+                full_name = f"{user.first_name} {user.last_name or ''}".strip()
                 writer.writerow(
-                    [user.id, username, f"{user.first_name} {user.last_name or ''}".strip(), link]
+                    [
+                        user.id,
+                        _csv_safe(username),
+                        _csv_safe(full_name),
+                        _csv_safe(link),
+                    ]
                 )
                 count += 1
     print(f"Сохранено {count} участников в {out_name}")
