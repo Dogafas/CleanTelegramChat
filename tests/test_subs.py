@@ -735,6 +735,64 @@ class CompositionEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(left, [])
 
+    def test_interactive_session_loop_drilldown_and_apply(self):
+        chat1 = Chat(id=101, title="Канал 1", username="c1")
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        p1 = Chat(id=10, date=now, text="Текст поста 1")
+        row1 = {
+            "chat": chat1,
+            "posts": [p1],
+            "signals": [],
+            "metrics": {},
+            "verdict": {
+                "voice": "deep", "slop": 0.8, "clickbait": 0.1,
+                "ads": 0.1, "emotional_pressure": 0.1, "repetition": 0.1,
+            },
+        }
+        app = Chat(
+            get_chat_history=lambda cid, limit=100, offset_id=None: [
+                Chat(id=9, date=now - timedelta(days=2), text="Старый пост 1")
+            ],
+            leave_chat=lambda cid: True,
+        )
+
+        select_choices = ["drilldown", "candidates", "apply", "exit"]
+        select_calls: list[str] = []
+
+        def fake_select(msg, choices):
+            action = select_choices.pop(0)
+            select_calls.append(action)
+            return action
+
+        def fake_ask_chats(choices):
+            # В drilldown выбираем chat1, в candidates выбираем chat1
+            return [chat1]
+
+        def fake_text(prompt):
+            return "14"
+
+        applied_logs: list[str] = []
+
+        clean_my_subs.interactive_session_loop(
+            app,
+            [row1],
+            session_name="test_sess",
+            evaluate_fn=lambda *a, **k: row1["verdict"],
+            ask_chats_fn=fake_ask_chats,
+            confirm_fn=lambda msg: True,
+            select_fn=fake_select,
+            text_fn=fake_text,
+            restore_fn=lambda app: None,
+            log=applied_logs.append,
+        )
+
+        # Проверяем, что drilldown добавил старый пост и обновил покрытие
+        self.assertEqual(len(row1["posts"]), 2)
+        self.assertIn("coverage", row1)
+        self.assertEqual(row1["coverage"]["raw_messages_count"], 2)
+        # Проверяем, что в цикле были вызваны выбранные пункты меню
+        self.assertEqual(select_calls, ["drilldown", "candidates", "apply", "exit"])
+
 
 if __name__ == "__main__":
     unittest.main()

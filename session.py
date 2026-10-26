@@ -60,7 +60,6 @@ def migrate_legacy_sessions(root: Path | None = None) -> list[str]:
 
 
 def list_sessions(root: Path | None = None) -> list[str]:
-    migrate_legacy_sessions(root)
     dest = sessions_dir(root)
     return sorted(p.stem for p in dest.glob("*.session") if p.is_file())
 

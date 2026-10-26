@@ -347,21 +347,23 @@ def folder_limits(
             log("Лимиты вкладок не прочитаны, берём 10 папок и 100 чатов.")
             return FALLBACK_FOLDERS, FALLBACK_CHATS
 
-        is_premium = bool(getattr(me, "is_premium", False))
-        cfg_dict: dict[str, int] = {}
-        for item in config.value:
-            k = getattr(item, "key", None)
-            v = getattr(item, "value", None)
-            if k is not None and isinstance(v, raw.types.JsonNumber):
-                cfg_dict[k] = int(v.value)
-
-        if is_premium:
-            folders = cfg_dict.get("dialog_filters_limit_premium", PREMIUM_FOLDERS)
-            chats = cfg_dict.get("dialog_filters_chats_limit_premium", PREMIUM_CHATS)
-        else:
-            folders = cfg_dict.get("dialog_filters_limit_default", FALLBACK_FOLDERS)
-            chats = cfg_dict.get("dialog_filters_chats_limit_default", FALLBACK_CHATS)
-
+        is_prem = bool(getattr(me, "is_premium", False))
+        cfg = {
+            item.key: int(item.value.value)
+            for item in config.value
+            if getattr(item, "key", None)
+            and isinstance(getattr(item, "value", None), raw.types.JsonNumber)
+        }
+        chat_key = (
+            "dialog_filters_chats_limit_premium"
+            if is_prem
+            else "dialog_filters_chats_limit_default"
+        )
+        folders = cfg.get(
+            "dialog_filters_limit_premium" if is_prem else "dialog_filters_limit_default",
+            PREMIUM_FOLDERS if is_prem else FALLBACK_FOLDERS,
+        )
+        chats = cfg.get(chat_key, PREMIUM_CHATS if is_prem else FALLBACK_CHATS)
         log(f"Лимиты вкладок: {folders} папок, {chats} чатов.")
         return folders, chats
     except Exception:

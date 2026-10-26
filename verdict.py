@@ -78,17 +78,16 @@ def is_valid_verdict(verdict: Any) -> bool:
     """Проверка валидности вердикта (все поля на месте, числа конечны и в диапазоне [0, 1])."""
     if not isinstance(verdict, dict) or "error" in verdict:
         return False
-    required_noul = ("slop", "clickbait", "ads", "emotional_pressure", "repetition")
-    valid_voices = ("deep", "news", "authorial_fun", "noise")
-    if "voice" not in verdict or verdict["voice"] not in valid_voices:
+    if verdict.get("voice") not in ("deep", "news", "authorial_fun", "noise"):
         return False
-    for k in required_noul:
-        v = verdict.get(k)
-        if not isinstance(v, (int, float)) or isinstance(v, bool):
-            return False
-        if not math.isfinite(v) or not (0.0 <= float(v) <= 1.0):
-            return False
-    return True
+    keys = ("slop", "clickbait", "ads", "emotional_pressure", "repetition")
+    return all(
+        isinstance(v := verdict.get(k), (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(v)
+        and 0.0 <= float(v) <= 1.0
+        for k in keys
+    )
 
 
 def text_reasons(verdict: dict[str, Any] | None) -> list[str]:
@@ -118,6 +117,41 @@ def _post_text(message: Any) -> str:
     return str(raw)[:1000]
 
 
+def prepare_model_texts(
+    publications: list[Any],
+    max_texts: int = 30,
+    max_chars: int = 1000,
+) -> tuple[list[tuple[Any, str]], int]:
+    """Детерминированный равномерный отбор текстов для модели (Section 1 & 4)."""
+    # ponytail: равномерная сетка индексов по времени без предпочтения реакций/просмотров
+    candidates = [
+        (getattr(p, "id", idx), str(getattr(p, "text", None) or getattr(p, "caption", None) or ""))
+        for idx, p in enumerate(publications)
+    ]
+    candidates = [(pid, text) for pid, text in candidates if text.strip()]
+    if not candidates:
+        return [], 0
+
+    if len(candidates) <= max_texts:
+        selected = candidates
+    elif max_texts <= 1:
+        selected = [candidates[0]]
+    else:
+        n = len(candidates)
+        step = (n - 1) / (max_texts - 1)
+        seen: set[int] = set()
+        selected = []
+        for i in range(max_texts):
+            idx = round(i * step)
+            if idx not in seen and 0 <= idx < n:
+                seen.add(idx)
+                selected.append(candidates[idx])
+
+    truncated_count = sum(1 for _, t in selected if len(t) > max_chars)
+    prepared = [(pid, t[:max_chars]) for pid, t in selected]
+    return prepared, truncated_count
+
+
 def evaluate(
     title: str,
     posts: list[Any],
@@ -127,12 +161,15 @@ def evaluate(
     call: Any = None,
 ) -> dict[str, Any]:
     """Вердикт Jev по текстам подписки: Choice голоса + 5 Noul текстового провала."""
+    prepared, truncated_count = prepare_model_texts(posts, max_texts=30, max_chars=1000)
+    evaluated_ids = [pid for pid, _ in prepared]
+    selected_texts = [text for _, text in prepared]
     try:
         # ponytail: тексты каналов — непроверенные внешние данные, обрезаем по длине
         state = {
             "channel": str(title),
             "description": str(description or "")[:500],
-            "posts": [_post_text(m) for m in posts][:30],
+            "posts": selected_texts,
         }
         if call is None:
             if client_factory is None:
@@ -151,7 +188,12 @@ def evaluate(
         answers = response.answers
         voice_obj = answers["voice"]
         voice_choice = getattr(voice_obj, "choice", voice_obj)
-        verdict: dict[str, Any] = {"voice": voice_choice}
+        verdict: dict[str, Any] = {
+            "voice": voice_choice,
+            "evaluated_ids": evaluated_ids,
+            "model_texts_count": len(selected_texts),
+            "truncated_texts_count": truncated_count,
+        }
         for k in ("slop", "clickbait", "ads", "emotional_pressure", "repetition"):
             ans = answers[k]
             val = getattr(ans, "noul", ans)
@@ -161,7 +203,6 @@ def evaluate(
         return verdict
     except Exception as e:
         return {"error": f"Ошибка обработки ответа модели: {e}"}
-
 
 VOICE_RU = {
     "deep": "глубокий",
