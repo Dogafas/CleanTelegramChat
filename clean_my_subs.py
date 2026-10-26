@@ -33,10 +33,6 @@ def choice_row(candidate: Candidate) -> tuple[StyledTitle, Any, bool]:
     return (title, candidate.chat, candidate.checked)
 
 
-def _choices(candidates: list[Candidate]) -> list[tuple[StyledTitle, Any, bool]]:
-    return [choice_row(candidate) for candidate in candidates]
-
-
 def _manage_action_plan(
     candidates: list[Candidate],
     plan: ActionPlan,
@@ -61,7 +57,7 @@ def _manage_action_plan(
     if not act_type or act_type == "back":
         return
 
-    choices = _choices(candidates)
+    choices = [choice_row(candidate) for candidate in candidates]
     if act_type != "leave":
         choices = [(row[0], row[1], False) for row in choices]
 

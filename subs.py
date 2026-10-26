@@ -4,7 +4,6 @@ import random
 import re
 import statistics
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import Any, Callable
 
 from pyrogram.errors import FloodWait, RPCError
@@ -19,16 +18,10 @@ MIN_POSTS_FOR_CV = 2  # минимум постов для статистики 
 # ponytail: пороги ресёрча (Statzen/TGuard/ppc.world, ADR 0007) в одном dict.
 # Метрики служат косвенными сигналами для проверки, а не доказательством накрутки.
 THRESHOLDS = {
-    "err_good": 15.0,  # % views/subs: >=15 живой
     "err_bad": 5.0,  # <5% — низкая вовлечённость
     "err_inflated": 100.0,  # views>subs — аномально высокий охват
-    "er_good": 3.0,  # % взаимодействий/views: >=3 отлично
-    "er_bad": 0.5,  # <0.5 при живых views — низкий отклик
-    "ad_share_good": 0.05,  # доля рекламных постов: <=5% чисто
     "ad_share_bad": 0.25,  # >25% — высокая доля рекламы
-    "cv_good": 0.25,  # коэффициент вариации views: живой диапазон 0.2-0.5
     "cv_bad": 0.15,  # подозрительно ровный охват
-    "freq_good": 40.0,  # постов/мес: 20-40 оптимум
     "freq_bad": 60.0,  # >60 — частое обновление / нагрузка
     "bot_farm_subs": 100_000,  # >= 100k подписчиков
     "bot_farm_days": 60.0,  # <= 2 месяцев (60 дней)
@@ -76,14 +69,9 @@ class Publication:
         text: str = "",
         *,
         views: int | None = None,
-        reactions: Any = None,
-        forwards: int | None = None,
         media_group_id: str | None = None,
-        message_ids: list[int] | None = None,
-        raw_messages: list[Any] | None = None,
         forward_from_chat_id: int | None = None,
         forward_from_message_id: int | None = None,
-        forward_date: Any = None,
         urls: list[str] | None = None,
     ) -> None:
         self.id = id
@@ -91,25 +79,10 @@ class Publication:
         self.text = text
         self.caption = text
         self.views = views
-        self.reactions = reactions
-        self.forwards = forwards
         self.media_group_id = media_group_id
-        self.message_ids = message_ids or ([id] if id is not None else [])
-        self.raw_messages = raw_messages or []
         self.forward_from_chat_id = forward_from_chat_id
         self.forward_from_message_id = forward_from_message_id
-        self.forward_date = forward_date
         self.urls = urls or []
-
-    @property
-    def forward_from_chat(self) -> Any:
-        if self.forward_from_chat_id is not None:
-            return SimpleNamespace(id=self.forward_from_chat_id)
-        return None
-
-    def __repr__(self) -> str:
-        mg = self.media_group_id
-        return f"<Publication id={self.id} date={self.date} text_len={len(self.text)} mg={mg}>"
 
 
 def _extract_text(m: Any) -> str:
@@ -117,7 +90,7 @@ def _extract_text(m: Any) -> str:
     return str(raw)
 
 
-def _extract_forward_info(m: Any) -> tuple[int | None, int | None, Any]:
+def _extract_forward_info(m: Any) -> tuple[int | None, int | None]:
     fwd_chat = getattr(m, "forward_from_chat", None)
     fwd_user = getattr(m, "forward_from", None)
     if fwd_chat:
@@ -127,8 +100,7 @@ def _extract_forward_info(m: Any) -> tuple[int | None, int | None, Any]:
     else:
         fwd_chat_id = getattr(m, "forward_from_chat_id", None)
     fwd_msg_id = getattr(m, "forward_from_message_id", None)
-    fwd_date = getattr(m, "forward_date", None)
-    return fwd_chat_id, fwd_msg_id, fwd_date
+    return fwd_chat_id, fwd_msg_id
 
 
 def group_media_publications(messages: list[Any]) -> list[Publication]:
@@ -150,10 +122,6 @@ def group_media_publications(messages: list[Any]) -> list[Publication]:
 
         if mg_key is not None and mg_key in by_media_group:
             pub = by_media_group[mg_key]
-            pub.raw_messages.append(m)
-            msg_id = getattr(m, "id", None)
-            if msg_id is not None:
-                pub.message_ids.append(msg_id)
             m_text = _extract_text(m)
             if m_text.strip() and not pub.text.strip():
                 pub.text = m_text
@@ -161,39 +129,27 @@ def group_media_publications(messages: list[Any]) -> list[Publication]:
             m_views = getattr(m, "views", None)
             if m_views is not None:
                 pub.views = max(pub.views or 0, int(m_views))
-            m_forwards = getattr(m, "forwards", None)
-            if m_forwards is not None:
-                pub.forwards = max(pub.forwards or 0, int(m_forwards))
-            f_chat, f_msg, f_date = _extract_forward_info(m)
+            f_chat, f_msg = _extract_forward_info(m)
             if f_chat is not None and pub.forward_from_chat_id is None:
                 pub.forward_from_chat_id = f_chat
                 pub.forward_from_message_id = f_msg
-                pub.forward_date = f_date
             continue
 
         text = _extract_text(m)
         views = getattr(m, "views", None)
         views_val = int(views) if views is not None else None
-        reactions = getattr(m, "reactions", None)
-        forwards = getattr(m, "forwards", None)
-        forwards_val = int(forwards) if forwards is not None else None
         msg_id = getattr(m, "id", 0)
         date = getattr(m, "date", None)
-        f_chat, f_msg, f_date = _extract_forward_info(m)
+        f_chat, f_msg = _extract_forward_info(m)
 
         pub = Publication(
             id=msg_id,
             date=date,
             text=text,
             views=views_val,
-            reactions=reactions,
-            forwards=forwards_val,
             media_group_id=mg_key,
-            message_ids=[msg_id] if msg_id is not None else [],
-            raw_messages=[m],
             forward_from_chat_id=f_chat,
             forward_from_message_id=f_msg,
-            forward_date=f_date,
         )
         grouped.append(pub)
         if mg_key is not None:
@@ -210,9 +166,6 @@ def compute_coverage(
     limit: int = POSTS_WINDOW,
     horizon_days: int | None = None,
     error: str | None = None,
-    history_exhausted: bool | None = None,
-    limit_reached: bool | None = None,
-    horizon_reached: bool | None = None,
 ) -> dict[str, Any]:
     """Сведения о покрытии выборки канала (Section 1)."""
     scan_dt = _to_utc_dt(scan_started_at) or datetime.now(timezone.utc)
@@ -236,41 +189,23 @@ def compute_coverage(
 
     if error:
         status = "unavailable" if raw_count == 0 else "partial"
-        history_exhausted = False if history_exhausted is None else history_exhausted
-        limit_reached = False if limit_reached is None else limit_reached
-        horizon_reached = False if horizon_reached is None else horizon_reached
     elif raw_count == 0:
         status = "unavailable"
-        history_exhausted = True if history_exhausted is None else history_exhausted
-        limit_reached = False
-        horizon_reached = False
         error = "нет доступных сообщений"
     else:
-        if history_exhausted is None:
-            history_exhausted = raw_count < limit
-        if limit_reached is None:
-            limit_reached = raw_count >= limit
-        if horizon_reached is None:
-            if horizon_days and oldest_dt:
-                h_dt = scan_dt - timedelta(days=horizon_days)
-                horizon_reached = oldest_dt <= h_dt
-            else:
-                horizon_reached = False
-        is_partial = limit_reached and not horizon_reached and bool(horizon_days)
-        status = "partial" if is_partial else "success"
+        limit_reached = raw_count >= limit
+        horizon_reached = bool(
+            horizon_days and oldest_dt and oldest_dt <= scan_dt - timedelta(days=horizon_days)
+        )
+        status = "partial" if (limit_reached and not horizon_reached) else "success"
 
     return {
         "scan_started_at": scan_dt,
-        "oldest_message_at": oldest_dt,
-        "newest_message_at": newest_dt,
         "raw_messages_count": raw_count,
         "publications_count": pubs_count,
         "text_publications_count": text_count,
         "model_texts_count": 0,
         "truncated_texts_count": 0,
-        "horizon_reached": horizon_reached,
-        "history_exhausted": history_exhausted,
-        "limit_reached": limit_reached,
         "status": status,
         "error": error,
         "span_days": span_days,
@@ -311,20 +246,6 @@ def format_coverage_short(cov: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _reaction_total(message: Any) -> int:
-    """Сумма реакций поста: Message.reactions — объект MessageReactions со списком .reactions."""
-    wrapper = getattr(message, "reactions", None)
-    if wrapper is None:
-        return 0
-    items = getattr(wrapper, "reactions", None)
-    if not items:
-        return 0
-    try:
-        return sum(int(r.count) for r in items)
-    except (TypeError, ValueError):
-        return 0
-
-
 def compute_metrics(
     _chat: Any,
     posts: list[Any],
@@ -337,22 +258,12 @@ def compute_metrics(
     texts = [(getattr(m, "text", None) or getattr(m, "caption", None) or "") for m in pubs]
     raw_views = [getattr(m, "views", None) for m in pubs]
     valid_views = [float(v) for v in raw_views if v is not None and float(v) > 0]
-    reactions = [_reaction_total(m) for m in pubs]
-    raw_forwards = [getattr(m, "forwards", None) for m in pubs]
     dates = [m.date for m in pubs if getattr(m, "date", None)]
 
     # ponytail: отсутствие данных/знаменателя не симулирует низкий отклик
     err: float | None = None
     if valid_views and members > 0:
         err = round((sum(valid_views) / len(valid_views)) / members * 100, 2)
-
-    er_values: list[float] = []
-    for m, r, f in zip(pubs, reactions, raw_forwards):
-        v = getattr(m, "views", None)
-        if v is not None and float(v) > 0:
-            f_val = float(f) if f is not None else 0.0
-            er_values.append((r + f_val) / float(v) * 100)
-    er: float | None = round(sum(er_values) / len(er_values), 2) if er_values else None
 
     cv: float | None = None
     if len(valid_views) >= MIN_POSTS_FOR_CV:
@@ -379,27 +290,9 @@ def compute_metrics(
         age_days = round(diff_sec / 86400.0, 1)
         age_months = max(age_days / 30.44, 0.1)
         growth_per_month = round(members / age_months, 1)
-    elif created_at is not None and hasattr(created_at, "__sub__"):
-        try:
-            valid_dates = [m.date for m in pubs if getattr(m, "date", None)]
-            ref_dt = max(valid_dates, default=None)
-            if ref_dt is not None:
-                diff = ref_dt - created_at
-                sec = (
-                    diff.total_seconds()
-                    if hasattr(diff, "total_seconds")
-                    else float(diff) * 86400
-                )
-                age_days = round(max(sec / 86400.0, 0.0), 1)
-                age_months = max(age_days / 30.44, 0.1)
-                growth_per_month = round(members / age_months, 1)
-        except Exception:
-            age_days = None
-            growth_per_month = None
 
     return {
         "err": err,
-        "er": er,
         "ad_share": ad_share,
         "cv_views": cv,
         "posts_per_month": posts_per_month,
@@ -415,38 +308,37 @@ def _coefficient_of_variation(values: list[float]) -> float:
     mean = statistics.mean(values)
     return (statistics.pstdev(values) / mean) if mean else 1.0
 
-def metric_signals(m: dict[str, Any], t: dict[str, Any] | None = None) -> list[str]:
+def metric_signals(m: dict[str, Any]) -> list[str]:
     """Косвенные сигналы метрик (ADR 0007, ADR 0009). Не являются доказательством накрутки."""
-    t = t or THRESHOLDS
     signals: list[str] = []
 
     freq = m.get("posts_per_month")
-    if freq is not None and freq > t["freq_bad"]:
+    if freq is not None and freq > THRESHOLDS["freq_bad"]:
         signals.append(f"частое обновление ({freq:.0f} постов/мес)")
 
     cv = m.get("cv_views")
-    if cv is not None and cv < t["cv_bad"]:
+    if cv is not None and cv < THRESHOLDS["cv_bad"]:
         signals.append("подозрительно ровный охват")
 
     err = m.get("err")
-    if err is not None and err > t["err_inflated"]:
+    if err is not None and err > THRESHOLDS["err_inflated"]:
         signals.append(f"аномально высокий охват (ERR {err:.0f}%)")
 
-    if err is not None and err < t["err_bad"]:
+    if err is not None and err < THRESHOLDS["err_bad"]:
         signals.append(f"низкая вовлечённость (ERR {err:.1f}%)")
 
     ad = m.get("ad_share")
-    if ad is not None and ad > t["ad_share_bad"]:
+    if ad is not None and ad > THRESHOLDS["ad_share_bad"]:
         signals.append(f"высокая доля рекламы ({round(ad * 100)}%)")
 
     age = m.get("age_days")
     if (
         age is not None
-        and age >= t["abandoned_years"] * 365.25
+        and age >= THRESHOLDS["abandoned_years"] * 365.25
         and freq is not None
-        and freq < t["abandoned_freq"]
+        and freq < THRESHOLDS["abandoned_freq"]
         and err is not None
-        and err < t["err_bad"]
+        and err < THRESHOLDS["err_bad"]
     ):
         years = age / 365.25
         signals.append(f"заброшенный канал ({years:.1f} г.)")
@@ -454,10 +346,10 @@ def metric_signals(m: dict[str, Any], t: dict[str, Any] | None = None) -> list[s
     members = m.get("members", 0)
     if (
         age is not None
-        and age <= t["bot_farm_days"]
-        and members >= t["bot_farm_subs"]
+        and age <= THRESHOLDS["bot_farm_days"]
+        and members >= THRESHOLDS["bot_farm_subs"]
         and err is not None
-        and err < t["err_bad"]
+        and err < THRESHOLDS["err_bad"]
     ):
         signals.append(f"резкий прирост аудитории ({members} суб за {int(age)} дн)")
 
@@ -583,8 +475,5 @@ def refine_channel_history(
         limit=limit,
         horizon_days=horizon_days,
         error=fetch_error,
-        history_exhausted=history_exhausted,
-        limit_reached=limit_reached,
-        horizon_reached=horizon_reached,
     )
     return all_messages, pubs, coverage
