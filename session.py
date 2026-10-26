@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -37,9 +36,6 @@ _MAX_PORT = 65535
 def env_path() -> Path:
     return Path(__file__).resolve().parent / ".env"
 
-
-def cache_path() -> Path:
-    return Path(__file__).resolve().parent / "cache.json"
 
 
 def sessions_dir(root: Path | None = None) -> Path:
@@ -192,7 +188,6 @@ def _write_env(path: Path, api_id: int, api_hash: str) -> None:
 def resolve_credentials(
     path: Path | str | None = None,
     *,
-    cache: Path | str | None = None,
     environ: Mapping[str, str] = os.environ,
     input_fn: Any = input,
 ) -> tuple[int, str]:
@@ -200,7 +195,6 @@ def resolve_credentials(
         return int(environ[ENV_ID]), str(environ[ENV_HASH])
 
     target_path = Path(path) if path is not None else env_path()
-    cache_file = Path(cache) if cache is not None else cache_path()
 
     if target_path.is_file():
         try:
@@ -209,17 +203,6 @@ def resolve_credentials(
             if ENV_ID in data and ENV_HASH in data:
                 return int(data[ENV_ID]), data[ENV_HASH]
         except (ValueError, OSError):
-            pass
-    elif cache_file.is_file():
-        try:
-            content = cache_file.read_text(encoding="utf-8")
-            data = json.loads(content)
-            if isinstance(data, dict) and "API_ID" in data and "API_HASH" in data:
-                api_id = int(data["API_ID"])
-                api_hash = str(data["API_HASH"])
-                _write_env(target_path, api_id, api_hash)
-                return api_id, api_hash
-        except (json.JSONDecodeError, ValueError, TypeError, OSError):
             pass
 
     api_id = int(input_fn("Введите ваш Telegram API ID: "))

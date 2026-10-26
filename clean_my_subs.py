@@ -170,13 +170,12 @@ def _channel_description(row: dict[str, Any]) -> str:
 
 
 def _ask_verdict(evaluate_fn: Callable[..., Any], row: dict[str, Any]) -> Any:
-    desc = _channel_description(row)
-    title, posts = row["chat"].title, row["posts"]
-    try:
-        return evaluate_fn(title, posts, description=desc)
-    except TypeError:
-        return evaluate_fn(title, posts)
-
+    title = getattr(row["chat"], "title", None) or "без названия"
+    return evaluate_fn(
+        title,
+        row["posts"],
+        description=_channel_description(row),
+    )
 
 def _attach_verdicts(
     scanned: list[dict[str, Any]],
@@ -237,16 +236,18 @@ def clean_subscriptions(
                 choices = _choices(candidates)
                 selected = ask(choices) or []
                 chats = [c["row"]["chat"] for c in candidates if c["row"]["chat"] in selected]
-                log("Будут отписаны:")
-                for chat in chats:
-                    log(chat_label(chat))
-                ok = bool(chats) and confirm(f"Отписаться от {len(chats)} каналов?") is True
-                # любой questionary-промпт ломает loop клиента — восстанавливаем
-                # после всех промптов, до любых вызовов Pyrogram (включая stop в __exit__)
                 restore(app)
                 if not chats:
                     log("Кандидаты не выбраны — ничего не отписано.")
-                elif ok:
+                    continue
+                log("Будут отписаны:")
+                for chat in chats:
+                    log(chat_label(chat))
+                ok = confirm(f"Отписаться от {len(chats)} каналов?") is True
+                # любой questionary-промпт ломает loop клиента — восстанавливаем
+                # после всех промптов, до любых вызовов Pyrogram (включая stop в __exit__)
+                restore(app)
+                if ok:
                     leave(app, chats, sleep=sleep, log=log)
         except Exception:
             logging.exception(f"Сессия {session_name} прервана")

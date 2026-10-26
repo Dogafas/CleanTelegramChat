@@ -70,22 +70,13 @@ def load_categories(path: Path) -> list[str]:
 
 
 def split_assignment(scores: dict[str, Any], categories: list[str]) -> list[str]:
-    assigned: list[str] = []
-    for name in categories:
-        val = float(scores[name])
-        if val >= NOUL_YES:
-            assigned.append(name)
-    return assigned
+    return [name for name in categories if float(scores[name]) >= NOUL_YES]
 
 
 def pick_peers(rows: list[tuple[float, int, Any]], limit: int) -> tuple[list[Any], list[Any]]:
     sorted_rows = sorted(rows, key=lambda r: (-r[0], r[1]))
-    if limit <= 0:
-        return [], [r[2] for r in sorted_rows]
-    kept = [r[2] for r in sorted_rows[:limit]]
-    rest = [r[2] for r in sorted_rows[limit:]]
-    return kept, rest
-
+    k = max(0, limit)
+    return [r[2] for r in sorted_rows[:k]], [r[2] for r in sorted_rows[k:]]
 
 def _chat_line(chat: Any) -> str:
     title = getattr(chat, "title", None) or "без названия"

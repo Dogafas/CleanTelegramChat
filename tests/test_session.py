@@ -1,7 +1,6 @@
 """Checks for session logic: sessions dir, credentials, proxy, prompt menu, telegram_client."""
 
 import asyncio
-import json
 import logging
 import tempfile
 import unittest
@@ -32,7 +31,6 @@ class ResolveCredentialsTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp_path = Path(tmp.name)
         self.env_path = self.tmp_path / ".env"
-        self.cache_path = self.tmp_path / "cache.json"
 
     def test_write_env_preserves_typesafe_keys(self):
         self.env_path.write_text(
@@ -51,7 +49,7 @@ class ResolveCredentialsTests(unittest.TestCase):
         self.assertEqual(data["TYPESAFE_API_KEY"], "abc")
         self.assertEqual(data["CATEGORIES_FILE"], "my.txt")
     def test_all_sources(self):
-        env_path, cache_path = self.env_path, self.cache_path
+        env_path = self.env_path
 
         # (a) both env vars "123"/"abc" -> (123, "abc"), input_fn never called, no .env created
         with self.subTest(case="a"):
@@ -59,7 +57,6 @@ class ResolveCredentialsTests(unittest.TestCase):
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={"TELEGRAM_API_ID": "123", "TELEGRAM_API_HASH": "abc"},
                     input_fn=lambda *a, **k: calls.append(1) or "",
                 ),
@@ -76,7 +73,6 @@ class ResolveCredentialsTests(unittest.TestCase):
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
                     input_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted")),
                 ),
@@ -84,70 +80,39 @@ class ResolveCredentialsTests(unittest.TestCase):
             )
             self.assertEqual(env_path.read_text(encoding="utf-8"), content_b)
 
-        # (c) no .env, cache.json {"API_ID": 42, "API_HASH": "zzz"} -> (42, "zzz"), no input_fn,
-        # .env now exists and contains both TELEGRAM_ keys,
-        # cache.json still on disk with original JSON
+        # (c) no .env -> prompt answers 77/secret, .env written with both keys
         with self.subTest(case="c"):
             env_path.unlink()
-            cache_raw_c = json.dumps({"API_ID": 42, "API_HASH": "zzz"})
-            cache_path.write_text(cache_raw_c, encoding="utf-8")
+            answers_c = iter(["77", "secret"])
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
-                    input_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted")),
-                ),
-                (42, "zzz"),
-            )
-            self.assertTrue(env_path.is_file())
-            env_c = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=42", env_c)
-            self.assertIn("TELEGRAM_API_HASH=zzz", env_c)
-            self.assertEqual(cache_path.read_text(encoding="utf-8"), cache_raw_c)
-
-        # (d) neither file exists -> prompt answers 77/secret, .env written with both keys,
-        # cache.json not created
-        with self.subTest(case="d"):
-            env_path.unlink()
-            cache_path.unlink()
-            answers_d = iter(["77", "secret"])
-            self.assertEqual(
-                resolve_credentials(
-                    env_path,
-                    cache=cache_path,
-                    environ={},
-                    input_fn=lambda *a, **k: next(answers_d),
+                    input_fn=lambda *a, **k: next(answers_c),
                 ),
                 (77, "secret"),
             )
             self.assertTrue(env_path.is_file())
-            env_d = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=77", env_d)
-            self.assertIn("TELEGRAM_API_HASH=secret", env_d)
-            self.assertFalse(cache_path.exists())
+            env_c = env_path.read_text(encoding="utf-8")
+            self.assertIn("TELEGRAM_API_ID=77", env_c)
+            self.assertIn("TELEGRAM_API_HASH=secret", env_c)
 
-        # (e) .env exists but has only TELEGRAM_API_ID (no hash) next to a valid cache.json ->
-        # cache.json NOT used (input_fn IS called), .env overwritten with prompted values
-        with self.subTest(case="e"):
+        # (d) .env exists but has only TELEGRAM_API_ID (no hash) ->
+        # input_fn called, .env overwritten with prompted values
+        with self.subTest(case="d"):
             env_path.write_text("TELEGRAM_API_ID=999\n", encoding="utf-8")
-            cache_raw_e = json.dumps({"API_ID": 888, "API_HASH": "from_cache"})
-            cache_path.write_text(cache_raw_e, encoding="utf-8")
-            answers_e = iter(["55", "new_hash"])
+            answers_d = iter(["55", "new_hash"])
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
-                    input_fn=lambda *a, **k: next(answers_e),
+                    input_fn=lambda *a, **k: next(answers_d),
                 ),
                 (55, "new_hash"),
             )
-            env_e = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=55", env_e)
-            self.assertIn("TELEGRAM_API_HASH=new_hash", env_e)
-            self.assertEqual(cache_path.read_text(encoding="utf-8"), cache_raw_e)
-
+            env_d = env_path.read_text(encoding="utf-8")
+            self.assertIn("TELEGRAM_API_ID=55", env_d)
+            self.assertIn("TELEGRAM_API_HASH=new_hash", env_d)
 
 class ResolveProxySourceTests(unittest.TestCase):
     def setUp(self):
@@ -315,9 +280,9 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.tmp_path = Path(tmp.name)
 
     def test_corrupted_env_preserves_proxy_lines(self):
-        # 10. Corrupted .env (TELEGRAM_API_ID=999, no hash) with 3 valid proxy lines,
-        # valid cache.json nearby: credentials prompted, .env rewritten with new credentials
-        # and preserves same 3 proxy lines, cache.json unchanged
+        # 10. Corrupted .env (TELEGRAM_API_ID=999, no hash) with 3 valid proxy lines:
+        # credentials prompted, .env rewritten with new credentials
+        # and preserves same 3 proxy lines
         p10 = self.tmp_path / "env10.env"
         p10.write_text(
             "TELEGRAM_API_ID=999\n"
@@ -326,14 +291,10 @@ class ProxyIntegrationTests(unittest.TestCase):
             "TELEGRAM_PROXY_PORT=1080\n",
             encoding="utf-8",
         )
-        c10 = self.tmp_path / "cache10.json"
-        raw_c10 = json.dumps({"API_ID": 888, "API_HASH": "from_cache"})
-        c10.write_text(raw_c10, encoding="utf-8")
         answers_10 = iter(["55", "new_hash"])
         self.assertEqual(
             resolve_credentials(
                 p10,
-                cache=c10,
                 environ={},
                 input_fn=lambda *a, **k: next(answers_10),
             ),
@@ -345,7 +306,6 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn("TELEGRAM_PROXY_SCHEME=socks5", content_10)
         self.assertIn("TELEGRAM_PROXY_HOSTNAME=127.0.0.1", content_10)
         self.assertIn("TELEGRAM_PROXY_PORT=1080", content_10)
-        self.assertEqual(c10.read_text(encoding="utf-8"), raw_c10)
 
     def test_client_logs_host_but_not_password(self):
         # 11. telegram_client: factory records kwargs and yields itself as context manager.

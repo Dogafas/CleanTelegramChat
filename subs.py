@@ -2,6 +2,7 @@
 
 import random
 import re
+import statistics
 from datetime import datetime, timezone
 from typing import Any
 
@@ -171,12 +172,8 @@ def compute_metrics(
 
 
 def _coefficient_of_variation(values: list[float]) -> float:
-    mean = sum(values) / len(values)
-    if mean == 0:
-        return 1.0
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
-    return (variance ** 0.5) / mean
-
+    mean = statistics.mean(values)
+    return (statistics.pstdev(values) / mean) if mean else 1.0
 
 def metric_signals(m: dict[str, Any], t: dict[str, Any] | None = None) -> list[str]:
     """Косвенные сигналы метрик (ADR 0007, ADR 0009). Не являются доказательством накрутки."""
