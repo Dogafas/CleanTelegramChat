@@ -10,26 +10,34 @@ from typing import Any
 from pyrogram.errors import FloodWait
 
 from catalog import chat_label
+from purge import flood_delay
 from session import prompt_sessions, restore_client_loop, telegram_client
 from subs import (
     ANALYSIS_PAUSE,
-    CANDIDATE_THRESHOLD,
     channel_subscriptions,
     compute_metrics,
     fetch_creation_date,
     fetch_posts,
-    flood_delay,
     leave_chats,
-    score_channel,
+    metric_signals,
 )
-from ui import ask_chats, ask_confirm
-from verdict import choice_suffix, evaluate, has_text, text_reasons
+from ui import StyledTitle, ask_chats, ask_confirm
+from verdict import (
+    REASON_RU,
+    evaluate,
+    has_text,
+    is_valid_verdict,
+    text_reasons,
+    verdict_label,
+)
 
 _ask_unsubscribe = partial(ask_chats, message="Отметьте каналы для отписки")
 
 
-def scan_channels(app: Any, log: Callable[[str], None], rng=random.uniform) -> list[dict[str, Any]]:
-    """Метрики + скор по каждой подписке с постами."""
+def scan_channels(
+    app: Any, log: Callable[[str], None], rng=random.uniform
+) -> list[dict[str, Any]]:
+    """Метрики по каждой подписке с постами."""
     channels = channel_subscriptions(app)
     if not channels:
         log("Каналов в подписках не найдено.")
@@ -63,36 +71,98 @@ def scan_channels(app: Any, log: Callable[[str], None], rng=random.uniform) -> l
             log(f"Пропуск {chat_label(chat)}: нет постов в истории")
             continue
         metrics = compute_metrics(chat, posts, members, created_at=created_at)
-        result = score_channel(metrics)
+        signals = metric_signals(metrics)
         growth_str = ""
         if metrics.get("growth_per_month") is not None:
             growth_str = (
                 f" | возраст: {metrics['age_days']:.0f}д"
                 f" (~{metrics['growth_per_month']:.0f} суб/мес)"
             )
-        flags_note = f" | ФЛАГИ: {'; '.join(result['flags'])}" if result["flags"] else ""
-        log(
-            f"{chat_label(chat)} — скор {result['score']}/100{growth_str}"
-            f" | по метрикам: {result['scores']}{flags_note}"
-        )
-        result["chat"] = chat
-        result["description"] = getattr(full_chat, "description", None) or ""
-        result["metrics"] = metrics
-        result["posts"] = posts
-        results.append(result)
+        signals_str = f" | сигналы: {'; '.join(signals)}" if signals else " | сигналы: в норме"
+        log(f"{chat_label(chat)}{growth_str}{signals_str}")
+        results.append({
+            "chat": chat,
+            "description": getattr(full_chat, "description", None) or "",
+            "metrics": metrics,
+            "signals": signals,
+            "posts": posts,
+        })
     return results
 
 
-def _choices(candidates: list[dict[str, Any]]) -> list[Any]:
-    # ponytail: тот же формат кортежей, что и catalog._build_choices
-    rows = []
-    for c in candidates:
-        suffix, checked = choice_suffix(
-            c.get("verdict"), c["score"] < CANDIDATE_THRESHOLD, c["flags"]
-        )
-        title = f"{chat_label(c['chat'])} — скор {c['score']}/100{suffix}"
-        rows.append((title, c["chat"], checked))
-    return rows
+def classify_candidate(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Маршрутизация подписки: RED [Отписаться], YELLOW [Проверить], GRAY [Недостаточно данных]."""
+    verdict = row.get("verdict")
+    signals = row.get("signals") or []
+    posts = row.get("posts") or []
+
+    # Текстовая оценка доступна и корректна
+    if has_text(posts) and is_valid_verdict(verdict) and isinstance(verdict, dict):
+        reasons = text_reasons(verdict)
+        if reasons:
+            text_labels = [REASON_RU.get(r, r) for r in reasons]
+            # ponytail: все сработавшие причины (текст + метрические предупреждения) в одной строке
+            return {
+                "category": "red",
+                "label": "[Отписаться]",
+                "style": "fg:ansired",
+                "checked": True,
+                "voice": verdict.get("voice"),
+                "reasons": [*text_labels, *signals],
+                "row": row,
+            }
+        if signals:
+            return {
+                "category": "yellow",
+                "label": "[Проверить]",
+                "style": "fg:ansiyellow",
+                "checked": False,
+                "voice": verdict.get("voice"),
+                "reasons": signals,
+                "row": row,
+            }
+        return None
+
+    # Вердикт недоступен (нет текста, сбой API или некорректная форма ответа)
+    # Приоритет над цветом метрик: серая категория с метрическими сигналами во вторую очередь
+    status_reason = "нет текста" if not has_text(posts) else "ошибка вердикта"
+    return {
+        "category": "gray",
+        "label": "[Недостаточно данных]",
+        "style": "fg:ansibrightblack",
+        "checked": False,
+        "voice": None,
+        "reasons": [status_reason, *signals],
+        "row": row,
+    }
+
+
+def _build_candidate_row(c: dict[str, Any]) -> tuple[StyledTitle, Any, bool]:
+    chat = c["row"]["chat"]
+    parts = [chat_label(chat)]
+    if c.get("voice"):
+        parts.append(verdict_label(c["voice"]))
+    if c.get("reasons"):
+        parts.append(", ".join(c["reasons"]))
+    tail = f" {' | '.join(parts)}"
+    styled_title = StyledTitle([(c["style"], c["label"]), ("", tail)])
+    return (styled_title, chat, c["checked"])
+
+
+def _choices(candidates: list[dict[str, Any]]) -> list[tuple[StyledTitle, Any, bool]]:
+    """Построение списка вариантов чекбокса для кандидатов на отписку."""
+    classified: list[dict[str, Any]] = []
+    for item in candidates:
+        if "category" in item and "row" in item:
+            classified.append(item)
+        else:
+            c = classify_candidate(item)
+            if c is not None:
+                classified.append(c)
+    priority = {"red": 0, "yellow": 1, "gray": 2}
+    classified.sort(key=lambda x: priority[x["category"]])
+    return [_build_candidate_row(c) for c in classified]
+
 
 def _channel_description(row: dict[str, Any]) -> str:
     chat = row["chat"]
@@ -119,7 +189,11 @@ def _attach_verdicts(
             continue
         log(f"Запрос вердикта LLM: {row['chat'].title}")
         try:
-            row["verdict"] = _ask_verdict(evaluate_fn, row)
+            verdict = _ask_verdict(evaluate_fn, row)
+            if not is_valid_verdict(verdict):
+                row["verdict"] = {"error": "некорректный ответ модели"}
+            else:
+                row["verdict"] = verdict
         except Exception:
             logging.exception("Вердикт не удался, канал без вердикта")
             row["verdict"] = {"error": "см. traceback в логе"}
@@ -150,18 +224,19 @@ def clean_subscriptions(
                 if not scanned:
                     continue
                 _attach_verdicts(scanned, evaluate_fn, log)
-                candidates = [
-                    c
-                    for c in scanned
-                    if c["score"] < CANDIDATE_THRESHOLD
-                    or c["flags"]
-                    or text_reasons(c["verdict"])
-                ]
+                candidates: list[dict[str, Any]] = []
+                for row in scanned:
+                    item = classify_candidate(row)
+                    if item is not None:
+                        candidates.append(item)
+                priority = {"red": 0, "yellow": 1, "gray": 2}
+                candidates.sort(key=lambda x: priority[x["category"]])
                 log(f"Кандидатов на отписку: {len(candidates)} из {len(scanned)}.")
                 if not candidates:
                     continue
-                selected = ask(_choices(candidates)) or []
-                chats = [c["chat"] for c in candidates if c["chat"] in selected]
+                choices = _choices(candidates)
+                selected = ask(choices) or []
+                chats = [c["row"]["chat"] for c in candidates if c["row"]["chat"] in selected]
                 log("Будут отписаны:")
                 for chat in chats:
                     log(chat_label(chat))

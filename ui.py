@@ -3,6 +3,15 @@
 from typing import Any
 
 
+class StyledTitle(list[tuple[str, str]]):
+    """Список токенов prompt_toolkit (style, text), чьё str() возвращает плоский текст."""
+
+    # ponytail: prompt_toolkit принимает список пар (стиль, текст);
+    # переопределение __str__ позволяет коду логов/тестов видеть строку без ANSI-магии.
+    def __str__(self) -> str:
+        return "".join(part[1] for part in self)
+
+
 def ask_select(message: str, choices: list[Any]) -> Any:
     import questionary  # noqa: PLC0415
 
