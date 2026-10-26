@@ -14,12 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from sort_chats import _filter_title, existing_filters, folder_limits
+from chat_folder import add_peer, remove_peer
 from subs import leave_chat
 
 FOREVER_MUTE = 2147483647
 ARCHIVE_FOLDER_ID = 1
-MIN_FOLDER_ID = 2
 
 
 @dataclass
@@ -31,7 +30,7 @@ class ChannelAction:
     leave: bool = False
     mute: bool = False
     archive: bool = False
-    folder_id: int | None = None
+
     folder_title: str | None = None
 
 
@@ -53,7 +52,7 @@ class ActionPlan:
         act.leave = True
         act.mute = False
         act.archive = False
-        act.folder_id = None
+
         act.folder_title = None
 
     def set_mute(self, chat_id: int, title: str, enable: bool = True) -> None:
@@ -68,12 +67,9 @@ class ActionPlan:
         act.archive = enable
         act.leave = False
 
-    def set_folder(
-        self, chat_id: int, title: str, folder_id: int, folder_title: str
-    ) -> None:
-        """Режим 'читать отдельно' (добавление в папку)."""
+    def set_folder(self, chat_id: int, title: str, folder_title: str) -> None:
+        """Режим 'читать отдельно' (добавление в папку). Id вкладки решается при apply."""
         act = self._get_or_create(chat_id, title)
-        act.folder_id = folder_id
         act.folder_title = folder_title
         act.leave = False
 
@@ -82,7 +78,7 @@ class ActionPlan:
 
     def is_empty(self) -> bool:
         return not any(
-            a.leave or a.mute or a.archive or a.folder_id is not None
+            a.leave or a.mute or a.archive or a.folder_title
             for a in self.actions.values()
         )
 
@@ -91,7 +87,7 @@ class ActionPlan:
         leave_count = sum(1 for a in self.actions.values() if a.leave)
         mute_count = sum(1 for a in self.actions.values() if a.mute)
         archive_count = sum(1 for a in self.actions.values() if a.archive)
-        folder_count = sum(1 for a in self.actions.values() if a.folder_id is not None)
+        folder_count = sum(1 for a in self.actions.values() if a.folder_title)
         return {
             "leave": leave_count,
             "mute": mute_count,
@@ -100,13 +96,6 @@ class ActionPlan:
             "total_channels": len(self.actions),
         }
 
-
-def _get_peer_id(peer: Any) -> int | None:
-    for attr in ("channel_id", "chat_id", "user_id"):
-        val = getattr(peer, attr, None)
-        if val is not None:
-            return int(val)
-    return None
 
 
 def _journal_path(session_name: str, root_dir: Path | None = None) -> Path:
@@ -200,91 +189,6 @@ def _apply_archive(
     return "applied", journal_record
 
 
-def _apply_folder(
-    app: Any,
-    chat_id: int,
-    folder_id: int,
-    folder_title: str,
-) -> tuple[str, dict[str, Any] | None]:
-    from pyrogram import raw  # noqa: PLC0415
-
-    filters = existing_filters(app) or []
-    folder_limit, _ = folder_limits(app)
-    target_filter = next(
-        (
-            f
-            for f in filters
-            if getattr(f, "id", None) == folder_id
-            or (folder_title and _filter_title(f) == folder_title)
-        ),
-        None,
-    )
-
-    peer = app.resolve_peer(chat_id)
-    peer_id = _get_peer_id(peer)
-
-    if target_filter is not None:
-        include_peers = list(getattr(target_filter, "include_peers", []))
-        if any(_get_peer_id(p) == peer_id for p in include_peers):
-            return "already_set", None
-
-        updated_include = [*include_peers, peer]
-        updated_filter = raw.types.DialogFilter(
-            id=target_filter.id,
-            title=target_filter.title,
-            pinned_peers=list(getattr(target_filter, "pinned_peers", [])),
-            include_peers=updated_include,
-            exclude_peers=list(getattr(target_filter, "exclude_peers", [])),
-            contacts=getattr(target_filter, "contacts", None),
-            non_contacts=getattr(target_filter, "non_contacts", None),
-            groups=getattr(target_filter, "groups", None),
-            broadcasts=getattr(target_filter, "broadcasts", None),
-            bots=getattr(target_filter, "bots", None),
-            exclude_muted=getattr(target_filter, "exclude_muted", None),
-            exclude_read=getattr(target_filter, "exclude_read", None),
-            exclude_archived=getattr(target_filter, "exclude_archived", None),
-            title_noanimate=getattr(target_filter, "title_noanimate", None),
-            emoticon=getattr(target_filter, "emoticon", None),
-            color=getattr(target_filter, "color", None),
-        )
-        app.invoke(
-            raw.functions.messages.UpdateDialogFilter(
-                id=target_filter.id, filter=updated_filter
-            )
-        )
-        record = {
-            "action": "folder",
-            "chat_id": chat_id,
-            "folder_id": target_filter.id,
-            "was_new_folder": False,
-        }
-        return "applied", record
-
-    # Создание новой папки
-    if len(filters) >= folder_limit:
-        return "error", None
-
-    used_ids = {getattr(f, "id", None) for f in filters}
-    new_id = MIN_FOLDER_ID
-    while new_id in used_ids:
-        new_id += 1
-
-    new_filter = raw.types.DialogFilter(
-        id=new_id,
-        title=raw.types.TextWithEntities(text=folder_title, entities=[]),
-        pinned_peers=[],
-        include_peers=[peer],
-        exclude_peers=[],
-    )
-    app.invoke(raw.functions.messages.UpdateDialogFilter(id=new_id, filter=new_filter))
-    record = {
-        "action": "folder",
-        "chat_id": chat_id,
-        "folder_id": new_id,
-        "was_new_folder": True,
-    }
-    return "applied", record
-
 
 def apply_action_plan(
     app: Any,
@@ -352,11 +256,16 @@ def apply_action_plan(
                     "status": "error", "detail": f"ошибка архивации: {e}",
                 })
 
-        if act.folder_id is not None and act.folder_title:
+        if act.folder_title:
             try:
-                status, rec = _apply_folder(app, chat_id, act.folder_id, act.folder_title)
-                if rec:
-                    journal_records.append(rec)
+                status, folder_id, was_new = add_peer(app, chat_id, act.folder_title)
+                if status == "applied" and folder_id is not None:
+                    journal_records.append({
+                        "action": "folder",
+                        "chat_id": chat_id,
+                        "folder_id": folder_id,
+                        "was_new_folder": was_new,
+                    })
                 detail_text = (
                     f"добавлен в папку «{act.folder_title}»"
                     if status == "applied"
@@ -456,48 +365,13 @@ def rollback_session(
         elif action == "folder":
             try:
                 target_folder_id = rec.get("folder_id")
-                filters = existing_filters(app) or []
-                t_filter = next(
-                    (f for f in filters if getattr(f, "id", None) == target_folder_id),
-                    None,
-                )
-                if t_filter is None:
+                status = remove_peer(app, chat_id, int(target_folder_id))
+                if status == "skipped":
                     results.append({
                         "chat_id": chat_id, "action": "folder", "status": "skipped",
                         "detail": "папка уже не существует",
                     })
                     continue
-
-                peer = app.resolve_peer(chat_id)
-                peer_id = _get_peer_id(peer)
-                include_peers = [
-                    p for p in getattr(t_filter, "include_peers", [])
-                    if _get_peer_id(p) != peer_id
-                ]
-
-                updated_filter = raw.types.DialogFilter(
-                    id=t_filter.id,
-                    title=t_filter.title,
-                    pinned_peers=list(getattr(t_filter, "pinned_peers", [])),
-                    include_peers=include_peers,
-                    exclude_peers=list(getattr(t_filter, "exclude_peers", [])),
-                    contacts=getattr(t_filter, "contacts", None),
-                    non_contacts=getattr(t_filter, "non_contacts", None),
-                    groups=getattr(t_filter, "groups", None),
-                    broadcasts=getattr(t_filter, "broadcasts", None),
-                    bots=getattr(t_filter, "bots", None),
-                    exclude_muted=getattr(t_filter, "exclude_muted", None),
-                    exclude_read=getattr(t_filter, "exclude_read", None),
-                    exclude_archived=getattr(t_filter, "exclude_archived", None),
-                    title_noanimate=getattr(t_filter, "title_noanimate", None),
-                    emoticon=getattr(t_filter, "emoticon", None),
-                    color=getattr(t_filter, "color", None),
-                )
-                app.invoke(
-                    raw.functions.messages.UpdateDialogFilter(
-                        id=t_filter.id, filter=updated_filter
-                    )
-                )
                 results.append({
                     "chat_id": chat_id, "action": "folder", "status": "restored",
                     "detail": "канал удалён из папки чтения",

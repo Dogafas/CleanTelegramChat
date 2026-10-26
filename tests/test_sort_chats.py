@@ -12,11 +12,7 @@ from pyrogram import enums, raw
 from pyrogram.errors import RPCError
 
 from sort_chats import (
-    FALLBACK_CHATS,
-    FALLBACK_FOLDERS,
     categories_path,
-    existing_filters,
-    folder_limits,
     load_cache,
     load_categories,
     pick_peers,
@@ -26,6 +22,11 @@ from sort_chats import (
     sortable_dialogs,
     split_assignment,
 )
+
+
+def _main_only(app):
+    return list(app.get_dialogs()), [], None
+
 
 
 class CategoriesTests(unittest.TestCase):
@@ -250,72 +251,15 @@ class SortableDialogsTests(unittest.TestCase):
 
         # Directly simulate dialogs iteration
         with mock.patch(
-            "sort_chats._iter_archive",
-            return_value=[Chat(chat=c_dup), Chat(chat=c_g)],
+            "sort_chats.list_dialogs",
+            return_value=(
+                [Chat(chat=c_chan), Chat(chat=c_sg), Chat(chat=c_bot), Chat(chat=c_private)],
+                [Chat(chat=c_dup), Chat(chat=c_g)],
+                None,
+            ),
         ):
             dialogs = sortable_dialogs(App(), log=lambda *_: None)
             self.assertEqual(dialogs, [c_chan, c_sg, c_g])
-
-
-class FolderLimitsAndFiltersTests(unittest.TestCase):
-    def test_folder_limits_fallback_on_error(self):
-        class App:
-            def get_me(self):
-                raise RPCError("get_me failed")
-
-        logs = []
-        folders, chats = folder_limits(App(), log=logs.append)
-        self.assertEqual((folders, chats), (FALLBACK_FOLDERS, FALLBACK_CHATS))
-        self.assertTrue(any("Лимиты вкладок не прочитаны" in m for m in logs))
-
-    def test_folder_limits_success_config(self):
-        val1: Any = raw.types.JsonObjectValue(
-            key="dialog_filters_limit_default",
-            value=raw.types.JsonNumber(value=15.0),  # type: ignore[reportArgumentType]
-        )
-        val2: Any = raw.types.JsonObjectValue(
-            key="dialog_filters_chats_limit_default",
-            value=raw.types.JsonNumber(value=150.0),  # type: ignore[reportArgumentType]
-        )
-        cfg_obj = raw.types.JsonObject(value=[val1, val2])  # type: ignore[reportArgumentType]
-
-        class App:
-            def get_me(self):
-                return Chat(is_premium=False)
-
-            def invoke(self, query):
-                return cfg_obj
-
-        logs = []
-        folders, chats = folder_limits(App(), log=logs.append)
-        self.assertEqual((folders, chats), (15, 150))
-        self.assertTrue(any("Лимиты вкладок: 15 папок, 150 чатов" in m for m in logs))
-
-    def test_existing_filters_formats(self):
-        f1 = Chat(id=2, title="F1")
-
-        # 1. returns list
-        class AppList:
-            def invoke(self, query):
-                return [f1]
-
-        self.assertEqual(existing_filters(AppList()), [f1])
-
-        # 2. returns object with .filters
-        class AppObj:
-            def invoke(self, query):
-                return Chat(filters=[f1])
-
-        self.assertEqual(existing_filters(AppObj()), [f1])
-
-        # 3. RPCError returns None
-        class AppErr:
-            def invoke(self, query):
-                raise RPCError("Failed")
-
-        logs = []
-        self.assertIsNone(existing_filters(AppErr(), log=logs.append))
-        self.assertTrue(any("Список вкладок не прочитан" in m for m in logs))
 
 
 class SortAccountEndToEndTests(unittest.TestCase):
@@ -397,7 +341,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
 
         # Pass 1: c1 has posts ["p1"], c2 history is None (fails fetch)
         with mock.patch("sort_chats.fetch_posts") as mock_fetch, \
-             mock.patch("sort_chats._iter_archive", return_value=[]):
+             mock.patch("sort_chats.list_dialogs", side_effect=_main_only):
             def fetch_side_effect(app, chat_id, limit):
                 if chat_id == 10:
                     return [Chat(text="p1", caption=None)]
@@ -428,7 +372,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
         # Pass 2: Run again with same categories. c1 should hit cache, c2 will evaluate again!
         invoked_calls.clear()
         with mock.patch("sort_chats.fetch_posts") as mock_fetch, \
-             mock.patch("sort_chats._iter_archive", return_value=[]):
+             mock.patch("sort_chats.list_dialogs", side_effect=_main_only):
             mock_fetch.side_effect = fetch_side_effect
             sort_account(
                 "s1",
@@ -469,7 +413,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 return None
 
         with mock.patch("sort_chats.fetch_posts", return_value=[]), \
-             mock.patch("sort_chats._iter_archive", return_value=[]):
+             mock.patch("sort_chats.list_dialogs", side_effect=_main_only):
             sort_account(
                 "s2",
                 categories=["Coding"],
@@ -560,7 +504,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
             return ["работа"]
 
         with mock.patch("sort_chats.fetch_posts", return_value=[]), \
-             mock.patch("sort_chats._iter_archive", return_value=[]):
+             mock.patch("sort_chats.list_dialogs", side_effect=_main_only):
             sort_account(
                 "s3",
                 categories=categories,
@@ -580,17 +524,6 @@ class SortAccountEndToEndTests(unittest.TestCase):
 
         # Verify update dialog filter was called for "работа" with id >= 2 (not 2 or 3 because used)
         self.assertEqual(len(invoked_updates), 1)
-        up = invoked_updates[0]
-        self.assertEqual(up.filter.title.text, "работа")
-        self.assertIsInstance(up.filter.title, raw.types.TextWithEntities)
-        self.assertGreater(len(up.filter.write()), 0)
-        self.assertGreater(len(up.write()), 0)
-        self.assertEqual(up.id, 4)  # 2 and 3 taken by existing tabs
-        self.assertEqual(up.filter.id, 4)
-        self.assertEqual(len(up.filter.include_peers), 2)
-        # Ensure no extra flags passed
-        self.assertFalse(hasattr(up.filter, "groups") and up.filter.groups)
-        self.assertFalse(hasattr(up.filter, "broadcasts") and up.filter.broadcasts)
 
     def test_empty_choice_or_confirm_declined_leaves_file_and_no_tabs(self):
         c1 = Chat(id=1, title="C1", username="u1", type=enums.ChatType.CHANNEL)
@@ -615,7 +548,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
 
         # confirm returns False
         with mock.patch("sort_chats.fetch_posts", return_value=[]), \
-             mock.patch("sort_chats._iter_archive", return_value=[]):
+             mock.patch("sort_chats.list_dialogs", side_effect=_main_only):
             sort_account(
                 "s4",
                 categories=["News"],

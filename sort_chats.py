@@ -13,7 +13,8 @@ from typing import Any
 from pyrogram import enums
 from pyrogram.errors import FloodWait, RPCError
 
-from catalog import _iter_archive
+from chat_folder import create_only, snapshot
+from dialogs import list_dialogs
 from session import prompt_sessions, restore_client_loop, telegram_client
 from subs import ANALYSIS_PAUSE, POSTS_WINDOW, fetch_posts
 from ui import ask_chats, ask_confirm
@@ -22,10 +23,6 @@ from verdict import _post_text, load_typesafe_env
 RESERVED = ("без категории", "не оценено")
 TITLE_MAX = 12
 NOUL_YES = 0.5
-FALLBACK_FOLDERS = 10
-FALLBACK_CHATS = 100
-PREMIUM_FOLDERS = 20
-PREMIUM_CHATS = 200
 
 
 def categories_path(
@@ -141,17 +138,12 @@ def sortable_dialogs(
     log: Callable[[str], None] = logging.info,
 ) -> list[Any] | None:
     try:
-        main_dialogs = list(app.get_dialogs())
+        main_dialogs, archive_dialogs, archive_error = list_dialogs(app)
     except RPCError as e:
         log(f"Список диалогов не прочитан: {e}")
         return None
-
-    archive_dialogs: list[Any] = []
-    try:
-        archive_dialogs = list(_iter_archive(app))
-    except RPCError as e:
-        log(f"Архив не прочитан: {e}")
-
+    if archive_error:
+        log(f"Архив не прочитан: {archive_error}")
     result: list[Any] = []
     seen_ids: set[int] = set()
 
@@ -334,64 +326,6 @@ def classify_dialogs(
     return by_category, uncategorized, unevaluated, current_run_entries
 
 
-def folder_limits(
-    app: Any,
-    log: Callable[[str], None] = logging.info,
-) -> tuple[int, int]:
-    try:
-        from pyrogram import raw  # noqa: PLC0415
-
-        me = app.get_me()
-        config = app.invoke(raw.functions.help.GetAppConfig(hash=0))
-        if not isinstance(config, raw.types.JsonObject):
-            log("Лимиты вкладок не прочитаны, берём 10 папок и 100 чатов.")
-            return FALLBACK_FOLDERS, FALLBACK_CHATS
-
-        is_prem = bool(getattr(me, "is_premium", False))
-        cfg = {
-            item.key: int(item.value.value)
-            for item in config.value
-            if getattr(item, "key", None)
-            and isinstance(getattr(item, "value", None), raw.types.JsonNumber)
-        }
-        chat_key = (
-            "dialog_filters_chats_limit_premium"
-            if is_prem
-            else "dialog_filters_chats_limit_default"
-        )
-        folders = cfg.get(
-            "dialog_filters_limit_premium" if is_prem else "dialog_filters_limit_default",
-            PREMIUM_FOLDERS if is_prem else FALLBACK_FOLDERS,
-        )
-        chats = cfg.get(chat_key, PREMIUM_CHATS if is_prem else FALLBACK_CHATS)
-        log(f"Лимиты вкладок: {folders} папок, {chats} чатов.")
-        return folders, chats
-    except Exception:
-        log("Лимиты вкладок не прочитаны, берём 10 папок и 100 чатов.")
-        return FALLBACK_FOLDERS, FALLBACK_CHATS
-
-
-def existing_filters(
-    app: Any,
-    log: Callable[[str], None] = logging.info,
-) -> list[Any] | None:
-    try:
-        from pyrogram import raw  # noqa: PLC0415
-
-        res = app.invoke(raw.functions.messages.GetDialogFilters())
-        if hasattr(res, "filters") and isinstance(res.filters, list):
-            return res.filters
-        if isinstance(res, list):
-            return res
-        msg = (
-            f"Список вкладок не прочитан: неожиданный тип {type(res).__name__}. "
-            "Вкладки не создаём."
-        )
-        log(msg)
-        return None
-    except Exception as e:
-        log(f"Список вкладок не прочитан: {e}. Вкладки не создаём.")
-        return None
 
 
 def sort_account(
@@ -449,9 +383,8 @@ def sort_account(
 
         save_cache(cache_path, categories_hash, current_run_entries)
 
-        folder_limit, max_chats = folder_limits(app, log=log)
-        filters = existing_filters(app, log=log)
-        if filters is None:
+        titles, folder_limit, max_chats, used, ok = snapshot(app, log=log)
+        if not ok:
             return
 
         selected = choose_folders(
@@ -459,23 +392,17 @@ def sort_account(
             categories,
             by_category,
             folder_limit,
-            filters,
+            used=used,
+            titles=titles,
             ask=ask,
             confirm=confirm,
             restore=restore,
             log=log,
         )
         if selected:
-            create_folders(app, by_category, max_chats, filters, selected, log=log)
+            create_folders(app, by_category, max_chats, selected, log=log)
 
 
-def _filter_title(f: Any) -> str:
-    title = getattr(f, "title", None)
-    if isinstance(title, str):
-        return title.strip()
-    if title is not None and hasattr(title, "text") and isinstance(title.text, str):
-        return title.text.strip()
-    return ""
 
 
 def choose_folders(
@@ -483,15 +410,16 @@ def choose_folders(
     categories: list[str],
     by_category: dict[str, list[tuple[float, int, Any]]],
     folder_limit: int,
-    filters: list[Any],
     *,
+    used: int,
+    titles: set[str],
     ask: Callable[..., Any],
     confirm: Callable[..., Any],
     restore: Callable[[Any], None],
     log: Callable[[str], None],
 ) -> list[str] | None:
-    free = max(0, folder_limit - len(filters))
-    existing_titles = {_filter_title(f) for f in filters if _filter_title(f)}
+    free = max(0, folder_limit - used)
+    existing_titles = titles
 
     checkbox_items: list[tuple[str, str, bool]] = []
     for name in categories:
@@ -550,62 +478,35 @@ def create_folders(
     app: Any,
     by_category: dict[str, list[tuple[float, int, Any]]],
     max_chats: int,
-    filters: list[Any],
     selected: list[str],
     *,
     log: Callable[[str], None],
 ) -> None:
-    from pyrogram import raw  # noqa: PLC0415
-
-    used_ids = {f.id for f in filters if hasattr(f, "id") and isinstance(f.id, int)}
+    used_ids: set[int] = set()
     for name in selected:
-        folder_id = None
-        for cid in range(2, 256):
-            if cid not in used_ids:
-                folder_id = cid
-                used_ids.add(folder_id)
-                break
-        if folder_id is None:
-            log("Нет свободного id вкладки.")
-            break
-
         rows = by_category.get(name, [])
         kept_chats, rest_chats = pick_peers(rows, max_chats)
-        resolved_peers = []
-        unresolved_count = 0
-        for chat in kept_chats:
-            try:
-                peer = app.resolve_peer(chat.id)
-                resolved_peers.append(peer)
-            except Exception as e:
-                title = getattr(chat, "title", None) or "без названия"
-                log(f"Не удалось добавить {title} — {chat.id} во вкладку «{name}»: {e}")
-                unresolved_count += 1
-
-        if not resolved_peers:
+        status, unresolved, created = create_only(
+            app,
+            name,
+            [chat.id for chat in kept_chats],
+            used_ids=used_ids,
+            log=log,
+        )
+        for cid, err in unresolved:
+            chat = next((item for item in kept_chats if item.id == cid), None)
+            title = getattr(chat, "title", None) or "без названия"
+            log(f"Не удалось добавить {title} — {cid} во вкладку «{name}»: {err}")
+        if status == "no_id":
+            log("Нет свободного id вкладки.")
+            break
+        if status == "empty":
             log(f"Вкладка «{name}» пустая — не создаём.")
-            continue
-
-        try:
-            dialog_filter: Any = raw.types.DialogFilter(
-                id=folder_id,
-                title=raw.types.TextWithEntities(text=name, entities=[]),
-                pinned_peers=[],
-                include_peers=resolved_peers,
-                exclude_peers=[],
-            )
-            app.invoke(
-                raw.functions.messages.UpdateDialogFilter(
-                    id=folder_id,
-                    filter=dialog_filter,
-                ),
-                sleep_threshold=60,
-            )
-            kept_count = len(resolved_peers)
-            rest_count = len(rest_chats) + unresolved_count
-            log(f"«{name}»: во вкладку {kept_count}, только файл {rest_count}.")
-        except RPCError as e:
-            log(f"Вкладка «{name}» не создана: {e}")
+        elif status == "exists":
+            log(f"Вкладка «{name}» уже есть — только файл.")
+        elif status == "created":
+            rest_count = len(rest_chats) + len(unresolved)
+            log(f"«{name}»: во вкладку {created}, только файл {rest_count}.")
 
 def main() -> None:
     logging.basicConfig(

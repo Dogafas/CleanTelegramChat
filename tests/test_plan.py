@@ -22,12 +22,12 @@ class ActionPlanConflictTests(unittest.TestCase):
         plan = ActionPlan()
         plan.set_mute(10, "Канал 10")
         plan.set_archive(10, "Канал 10")
-        plan.set_folder(10, "Канал 10", 2, "Чтение")
+        plan.set_folder(10, "Канал 10", "Чтение")
 
         act = plan.actions[10]
         self.assertTrue(act.mute)
         self.assertTrue(act.archive)
-        self.assertEqual(act.folder_id, 2)
+        self.assertEqual(act.folder_title, "Чтение")
         self.assertFalse(act.leave)
 
         # Выбор отписки сбрасывает mute, archive, folder
@@ -36,7 +36,7 @@ class ActionPlanConflictTests(unittest.TestCase):
         self.assertTrue(act.leave)
         self.assertFalse(act.mute)
         self.assertFalse(act.archive)
-        self.assertIsNone(act.folder_id)
+        self.assertIsNone(act.folder_title)
 
     def test_mode_change_cancels_leave(self):
         plan = ActionPlan()
@@ -178,38 +178,6 @@ class PlanExecutionAndRollbackTests(unittest.TestCase):
             self.assertNotIn("session_file", content)
             self.assertNotIn("token", content)
             self.assertNotIn("secret", content)
-    def test_apply_folder_matches_by_title_with_entities(self):
-        existing_folder = Chat(
-            id=7,
-            title=Chat(text="Чтение"),
-            include_peers=[],
-        )
-        updated_filters: list[Any] = []
-
-        def fake_invoke(req: Any) -> Any:
-            name = type(req).__name__
-            if "GetDialogFilters" in name:
-                return Chat(filters=[existing_folder])
-            if "UpdateDialogFilter" in name:
-                updated_filters.append(req)
-                return True
-            return None
-
-        app = Chat(
-            resolve_peer=lambda cid: Chat(channel_id=cid),
-            invoke=fake_invoke,
-        )
-        plan = ActionPlan()
-        plan.set_folder(555, "Канал 555", folder_id=-1, folder_title="Чтение")
-
-        with tempfile.TemporaryDirectory() as td:
-            j_dir = Path(td)
-            reports = apply_action_plan(app, plan, session_name="s_folder", journal_dir=j_dir)
-            self.assertEqual(len(reports), 1)
-            self.assertEqual(reports[0]["status"], "applied")
-            self.assertEqual(len(updated_filters), 1)
-            # Проверяем, что обновлена именно существующая папка с id=7
-            self.assertEqual(updated_filters[0].id, 7)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from pyrogram import enums
 from pyrogram.errors import FloodWait, RPCError
 
 from purge import flood_delay
@@ -44,13 +43,6 @@ AD_MARKERS = re.compile(
 )
 
 
-def channel_subscriptions(app: Any) -> list[Any]:
-    """Все каналы, на которые подписан аккаунт (каналы уже есть в get_dialogs)."""
-    return [
-        d.chat
-        for d in app.get_dialogs()
-        if getattr(d, "chat", None) and d.chat.type == enums.ChatType.CHANNEL
-    ]
 
 
 def fetch_posts(app: Any, chat_id: int, limit: int = POSTS_WINDOW) -> list[Any]:

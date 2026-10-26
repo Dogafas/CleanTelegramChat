@@ -2,8 +2,8 @@
 
 ## Уже снимаем
 
-- **Скан (`clean_my_subs.py` `scan_channels`)**:
-  - `channel_subscriptions` (`get_dialogs` с фильтром по `enums.ChatType.CHANNEL`) получает базовый список подписок.
+- **Скан (`review.py` `scan`)**:
+  - `list_dialogs` читает основной список и архив; в оценку попадают `ChatType.CHANNEL`, включая архив.
   - `get_chat(chat.id)` вызывается ради `members_count` и `description`.
   - `get_chat_history(chat_id, limit=30)` выгружает срез из последних 30 постов.
   - `get_messages(chat_id, 1)` используется как прокси даты создания канала.
@@ -103,6 +103,6 @@
 
 ## Источники
 
-- `subs.py` (`compute_metrics`, `metric_signals`), `clean_my_subs.py` (`scan_channels`), `verdict.py` (`evaluate`);
+- `subs.py` (`compute_metrics`, `metric_signals`), `review.py` (`scan`), `verdict.py` (`evaluate`);
 - Kurigram 2.2.26;
 - `docs/adr/0007-subscription-quality-scoring.md`, `docs/adr/0009-text-fail-unsubscribe.md`.
