@@ -12,7 +12,6 @@ from purge import flood_delay
 
 POSTS_WINDOW = 30
 ANALYSIS_PAUSE = (1.0, 3.0)
-CHAT_PAUSE = (25.0, 75.0)
 MIN_POSTS_FOR_CV = 2  # минимум постов для статистики (CV, частота)
 
 # ponytail: пороги ресёрча (Statzen/TGuard/ppc.world, ADR 0007) в одном dict.
@@ -368,19 +367,6 @@ def leave_chat(app: Any, chat_id: int, *, sleep, rng=random.uniform, log=print) 
         except RPCError as e:
             log(f"Ошибка отписки от чата {chat_id}: {e}")
             return False
-
-
-def leave_chats(app: Any, chats: list[Any], *, sleep, rng=random.uniform, log=print) -> list[Any]:
-    done: list[Any] = []
-    for i, chat in enumerate(chats):
-        if i:
-            delay = rng(*CHAT_PAUSE)
-            log(f"Пауза {delay:.1f} с перед чатом {chat.title}")
-            sleep(delay)
-        if leave_chat(app, chat.id, sleep=sleep, rng=rng, log=log):
-            done.append(chat)
-            log(f"Отписка выполнена: {chat.title}")
-    return done
 
 
 def _process_history_batch(

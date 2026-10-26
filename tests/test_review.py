@@ -156,6 +156,34 @@ class ReviewRoutingTests(unittest.TestCase):
         self.assertEqual(calls["n"], 2)
         self.assertEqual(sleeps, [2.0])
 
+    def test_floodwait_retries_the_post_fetch(self):
+        calls = {"n": 0}
+
+        def get_chat_history(cid, limit):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise FloodWait(value=1)
+            return [_post()]
+
+        sleeps = []
+        app = Chat(
+            get_chat=lambda cid: Chat(members_count=10, description="ok"),
+            get_chat_history=get_chat_history,
+            get_messages=lambda cid, mid: None,
+        )
+        listed = ([Chat(chat=_channel(1, "Chan"))], [], None)
+        with mock.patch("review.list_dialogs", return_value=listed):
+            reviewed = scan(
+                app,
+                lambda *a, **k: dict(_CLEAN),
+                lambda *_: None,
+                sleep=sleeps.append,
+                rng=lambda a, b: 1,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(sleeps, [2.0])
+        self.assertEqual([chat.id for chat in reviewed.chats()], [1])
+
     def test_album_is_one_publication_in_the_log(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
         posts = [

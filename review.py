@@ -79,10 +79,12 @@ class Review:
             title = getattr(chat, "title", str(chat.id))
             log(f"Уточнение истории для «{title}» (до {horizon_days} дн., лимит {limit})…")
             full = _get_chat(app, chat, log, sleep, rng)
-            members = getattr(full, "members_count", 0) or 0 if full is not None else 0
             if full is not None:
+                members = getattr(full, "members_count", 0) or 0
                 desc = getattr(full, "description", None) or row.get("description") or ""
                 row["description"] = desc
+            else:
+                members = 0
             cov_old = row.get("coverage")
             scan_dt = cov_old.get("scan_started_at") if cov_old else None
             all_msgs, pubs, cov = refine_channel_history(
@@ -155,7 +157,18 @@ def _sample(
     if full is not None:
         members = getattr(full, "members_count", 0) or 0
         description = getattr(full, "description", None) or ""
-        posts = fetch_posts(app, chat.id)
+        while True:
+            try:
+                posts = fetch_posts(app, chat.id)
+                break
+            except FloodWait as e:
+                delay = flood_delay(e, rng)
+                log(f"FloodWait {delay:.0f} с, канал {chat_label(chat)}")
+                sleep(delay)
+            except Exception as e:
+                fetch_err = f"{type(e).__name__}: {e}"
+                log(f"Ошибка при получении постов {chat_label(chat)}: {e}")
+                break
         created_at = fetch_creation_date(app, chat.id)
     else:
         fetch_err = "чат не прочитан"

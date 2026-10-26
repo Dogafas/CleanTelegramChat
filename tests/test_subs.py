@@ -20,7 +20,7 @@ def _post(text="мысли о жизни"):
 
 
 class LeaveTests(unittest.TestCase):
-    def test_leave_chats_with_floodwait(self):
+    def test_leave_chat_retries_floodwait(self):
         calls = []
 
         class Flaky:
@@ -35,14 +35,14 @@ class LeaveTests(unittest.TestCase):
                 return True
 
         sleeps: list[float] = []
-        done = subs.leave_chats(
+        done = subs.leave_chat(
             Flaky(),
-            [Chat(id=5, title="Канал")],
+            5,
             sleep=sleeps.append,
             rng=lambda a, b: a,
             log=lambda *_: None,
         )
-        self.assertEqual([c.id for c in done], [5])
+        self.assertTrue(done)
         self.assertEqual(calls, [5, 5])
         self.assertEqual(sleeps, [2.0])
 
