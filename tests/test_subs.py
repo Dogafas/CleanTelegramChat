@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace as Chat
+from unittest import mock
 
 from pyrogram import enums
 from pyrogram.errors import FloodWait
@@ -183,6 +184,32 @@ class CatalogTests(unittest.TestCase):
         results = clean_my_subs.scan_channels(app, log=lambda *_: None)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["description"], "Био канала")
+
+    def test_scan_channels_with_floodwait(self):
+        full_chat = Chat(members_count=100, description="Био")
+        channel = Chat(id=1, type=enums.ChatType.CHANNEL, title="Канал")
+        calls = {"get_chat": 0}
+
+        def get_chat(cid):
+            calls["get_chat"] += 1
+            if calls["get_chat"] == 1:
+                raise FloodWait(value=1)
+            return full_chat
+
+        app = Chat(
+            get_dialogs=lambda limit: [Chat(chat=channel)],
+            get_chat=get_chat,
+            get_chat_history=lambda cid, limit: [_post()],
+            get_messages=lambda cid, mid: None,
+        )
+        sleeps = []
+        with mock.patch("clean_my_subs.sleep", side_effect=sleeps.append):
+            results = clean_my_subs.scan_channels(
+                app, log=lambda *_: None, rng=lambda a, b: 1.0
+            )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(calls["get_chat"], 2)
+        self.assertEqual(sleeps, [2.0])
 
 
 class LeaveTests(unittest.TestCase):

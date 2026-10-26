@@ -494,7 +494,9 @@ class SortAccountEndToEndTests(unittest.TestCase):
         c1 = Chat(id=11, title="C1", username="u1", type=enums.ChatType.CHANNEL)
         c2 = Chat(id=12, title="C2", username="u2", type=enums.ChatType.CHANNEL)
 
-        existing_tab = Chat(id=2, title="Existing")
+        existing_tab = Chat(
+            id=2, title=raw.types.TextWithEntities(text="Existing", entities=[])
+        )
         work_tab = Chat(id=3, title="Работа")
 
         invoked_updates: list[Any] = []
@@ -509,7 +511,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
             def get_chat(self, chat_id):
                 return Chat(description="")
             def resolve_peer(self, chat_id):
-                return Chat(peer_id=chat_id)
+                return raw.types.InputPeerChannel(channel_id=chat_id, access_hash=0)
 
             def invoke(self, query, **kw):
                 if isinstance(query, raw.functions.help.GetAppConfig):
@@ -579,7 +581,10 @@ class SortAccountEndToEndTests(unittest.TestCase):
         # Verify update dialog filter was called for "работа" with id >= 2 (not 2 or 3 because used)
         self.assertEqual(len(invoked_updates), 1)
         up = invoked_updates[0]
-        self.assertEqual(up.filter.title, "работа")
+        self.assertEqual(up.filter.title.text, "работа")
+        self.assertIsInstance(up.filter.title, raw.types.TextWithEntities)
+        self.assertGreater(len(up.filter.write()), 0)
+        self.assertGreater(len(up.write()), 0)
         self.assertEqual(up.id, 4)  # 2 and 3 taken by existing tabs
         self.assertEqual(up.filter.id, 4)
         self.assertEqual(len(up.filter.include_peers), 2)

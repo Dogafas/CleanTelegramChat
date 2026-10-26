@@ -476,6 +476,15 @@ def sort_account(
             create_folders(app, by_category, max_chats, filters, selected, log=log)
 
 
+def _filter_title(f: Any) -> str:
+    title = getattr(f, "title", None)
+    if isinstance(title, str):
+        return title.strip()
+    if title is not None and hasattr(title, "text") and isinstance(title.text, str):
+        return title.text.strip()
+    return ""
+
+
 def choose_folders(
     app: Any,
     categories: list[str],
@@ -489,11 +498,7 @@ def choose_folders(
     log: Callable[[str], None],
 ) -> list[str] | None:
     free = max(0, folder_limit - len(filters))
-    existing_titles = {
-        f.title.strip()
-        for f in filters
-        if hasattr(f, "title") and isinstance(f.title, str)
-    }
+    existing_titles = {_filter_title(f) for f in filters if _filter_title(f)}
 
     checkbox_items: list[tuple[str, str, bool]] = []
     for name in categories:
@@ -591,7 +596,7 @@ def create_folders(
         try:
             dialog_filter: Any = raw.types.DialogFilter(
                 id=folder_id,
-                title=name,
+                title=raw.types.TextWithEntities(text=name, entities=[]),
                 pinned_peers=[],
                 include_peers=resolved_peers,
                 exclude_peers=[],

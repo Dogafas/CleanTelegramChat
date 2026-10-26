@@ -3,7 +3,7 @@ import re
 import sys
 from pathlib import Path
 
-from pyrogram.errors import PeerIdInvalid
+from pyrogram.errors import PeerIdInvalid, RPCError
 
 from session import SESSION_NAME, telegram_client
 
@@ -53,8 +53,12 @@ def main(argv: list[str]) -> int:
     with telegram_client(session_name=session_name) as app:
         # Usernames resolve directly; raw IDs may need cache warm + -100 prefix.
         if chat_id is None:
-            chat = app.get_chat(chat_arg)
-            chat_id = chat.id
+            try:
+                chat = app.get_chat(chat_arg)
+                chat_id = chat.id
+            except RPCError as e:
+                print(f"Ошибка получения чата {chat_arg}: {e}", file=sys.stderr)
+                return 1
         else:
             chat_id, chat = _resolve(app, chat_id)
             if chat is None:
@@ -67,24 +71,28 @@ def main(argv: list[str]) -> int:
         raw_title = getattr(chat, "title", None) or ""
         title = re.sub(r"[^\w.-]+", "_", raw_title).strip("_") or str(chat_id)
         out_name = f"people_{title}_{chat_id}.csv"
-        with Path(out_name).open("w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(["user_id", "username", "full_name", "link"])
-            count = 0
-            for member in app.get_chat_members(chat_id):
-                user = member.user
-                username = user.username or ""
-                link = f"https://t.me/{username}" if username else f"tg://user?id={user.id}"
-                full_name = f"{user.first_name} {user.last_name or ''}".strip()
-                writer.writerow(
-                    [
-                        user.id,
-                        _csv_safe(username),
-                        _csv_safe(full_name),
-                        _csv_safe(link),
-                    ]
-                )
-                count += 1
+        try:
+            with Path(out_name).open("w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["user_id", "username", "full_name", "link"])
+                count = 0
+                for member in app.get_chat_members(chat_id):
+                    user = member.user
+                    username = user.username or ""
+                    link = f"https://t.me/{username}" if username else f"tg://user?id={user.id}"
+                    full_name = f"{user.first_name} {user.last_name or ''}".strip()
+                    writer.writerow(
+                        [
+                            user.id,
+                            _csv_safe(username),
+                            _csv_safe(full_name),
+                            _csv_safe(link),
+                        ]
+                    )
+                    count += 1
+        except RPCError as e:
+            print(f"Ошибка выгрузки участников {chat_arg}: {e}", file=sys.stderr)
+            return 1
     print(f"Сохранено {count} участников в {out_name}")
     return 0
 

@@ -7,6 +7,8 @@ from functools import partial
 from time import sleep
 from typing import Any
 
+from pyrogram.errors import FloodWait
+
 from catalog import chat_label
 from session import prompt_sessions, restore_client_loop, telegram_client
 from subs import (
@@ -16,6 +18,7 @@ from subs import (
     compute_metrics,
     fetch_creation_date,
     fetch_posts,
+    flood_delay,
     leave_chats,
     score_channel,
 )
@@ -36,13 +39,25 @@ def scan_channels(app: Any, log: Callable[[str], None], rng=random.uniform) -> l
     for i, chat in enumerate(channels):
         if i:
             sleep(rng(*ANALYSIS_PAUSE))
-        try:
-            full_chat = app.get_chat(chat.id)
-            members = getattr(full_chat, "members_count", 0) or 0
-            posts = fetch_posts(app, chat.id)
-            created_at = fetch_creation_date(app, chat.id)
-        except Exception as e:  # один канал не срывает обход
-            log(f"Пропуск {chat_label(chat)}: {e}")
+        full_chat = None
+        posts = []
+        created_at = None
+        members = 0
+        while True:
+            try:
+                full_chat = app.get_chat(chat.id)
+                members = getattr(full_chat, "members_count", 0) or 0
+                posts = fetch_posts(app, chat.id)
+                created_at = fetch_creation_date(app, chat.id)
+                break
+            except FloodWait as e:
+                delay = flood_delay(e, rng)
+                log(f"FloodWait {delay:.0f} с, канал {chat_label(chat)}")
+                sleep(delay)
+            except Exception as e:  # один канал не срывает обход
+                log(f"Пропуск {chat_label(chat)}: {e}")
+                break
+        if full_chat is None:
             continue
         if not posts:
             log(f"Пропуск {chat_label(chat)}: нет постов в истории")
