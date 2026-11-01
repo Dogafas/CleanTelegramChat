@@ -25,3 +25,4 @@ Done means both commands above are green. Hook: `.githooks/pre-commit`. Fresh cl
 - Chat folders → `docs/adr/0008-chat-folder-classification.md`
 - Kurigram types → `.venv/Lib/site-packages/pyrogram/types/`. Plan already names the fields → write the artifact, skip the library.
 - Jev `state` is text only (`channel`, `description`, `posts`). Quality Score and numeric metrics stay out. ADR 0009.
+- Слои «CLI-сценарии / ядро» → `tests/test_layers.py`: ядро не импортирует CLI, сценарии не импортируют друг друга. Новый корневой модуль — отнести к слою там же.
