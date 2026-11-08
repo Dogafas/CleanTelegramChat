@@ -92,6 +92,8 @@ def _apply_candidate_action(
         elif act and act.leave:
             plan.remove(cid)
         return
+    if not is_selected and act and act.leave:
+        return  # неподтверждённый режим не отменяет запланированную отписку
     if act_type == "mute":
         plan.set_mute(cid, title, enable=is_selected)
     elif act_type == "archive":

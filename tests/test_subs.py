@@ -150,6 +150,29 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
 
         self.assertTrue(plan.actions[10].leave)
 
+    def test_unchecked_mode_menu_keeps_leave_plan(self):
+        chat1 = Chat(id=10, title="Канал 10")
+        candidates = [Candidate("red", ["спам"], None, True, chat1)]
+        plan = ActionPlan()
+        plan.set_leave(10, "Канал 10")
+
+        actions_sequence = ["mute", "back"]
+        # меню «без звука»: канал не отмечен, подтверждение с пустым выбором
+        _manage_action_plan(
+            candidates,
+            plan,
+            {"leave_initialized": True},
+            ask_chats_fn=lambda *_: [],
+            select_fn=lambda *_, **__: actions_sequence.pop(0),
+            text_fn=lambda *_: "",
+            app=None,
+            restore_fn=lambda *_: None,
+            log=lambda *_: None,
+        )
+
+        self.assertTrue(plan.actions[10].leave)
+
+
 class VerdictTests(unittest.TestCase):
     def test_course_sale_alone_is_not_a_text_fail(self):
         self.assertEqual(
