@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -21,17 +21,58 @@ FOREVER_MUTE = 2147483647
 ARCHIVE_FOLDER_ID = 1
 
 
-@dataclass
-class ChannelAction:
-    """Запланированные действия для одного канала."""
+@dataclass(frozen=True)
+class Leave:
+    """Отписка: необратима, несовместима с режимами чтения."""
 
-    chat_id: int
-    title: str
-    leave: bool = False
+
+@dataclass(frozen=True)
+class Adjust:
+    """Режимы чтения: совместимы друг с другом, отменяют отписку."""
+
     mute: bool = False
     archive: bool = False
-
     folder_title: str | None = None
+
+    def is_empty(self) -> bool:
+        return not (self.mute or self.archive or self.folder_title)
+
+
+class ChannelAction:
+    """Запланированное действие над каналом: либо отписка, либо набор режимов.
+
+    Инвариант «отписка не сочетается с режимами» держит тип: состояние —
+    Leave | Adjust, невалидные комбинации неотображаемы. Чтение (leave/mute/
+    archive/folder_title) — свойства; мутации — только через методы ActionPlan.
+    """
+
+    def __init__(self, chat_id: int, title: str) -> None:
+        self.chat_id = chat_id
+        self.title = title
+        self._mode: Leave | Adjust = Adjust()
+
+    @property
+    def mode(self) -> Leave | Adjust:
+        return self._mode
+
+    def set_mode(self, mode: Leave | Adjust) -> None:
+        self._mode = mode
+
+    @property
+    def leave(self) -> bool:
+        return isinstance(self._mode, Leave)
+
+    @property
+    def mute(self) -> bool:
+        return isinstance(self._mode, Adjust) and self._mode.mute
+
+    @property
+    def archive(self) -> bool:
+        return isinstance(self._mode, Adjust) and self._mode.archive
+
+    @property
+    def folder_title(self) -> str | None:
+        return self._mode.folder_title if isinstance(self._mode, Adjust) else None
 
 
 class ActionPlan:
@@ -45,42 +86,39 @@ class ActionPlan:
             self.actions[chat_id] = ChannelAction(chat_id=chat_id, title=title)
         return self.actions[chat_id]
 
+    def _drop_if_empty(self, chat_id: int) -> None:
+        act = self.actions.get(chat_id)
+        if act is not None and isinstance(act.mode, Adjust) and act.mode.is_empty():
+            del self.actions[chat_id]
+
     def set_leave(self, chat_id: int, title: str) -> None:
         """Отписка несовместима с другими режимами этого канала."""
-        # ponytail: отписка сбрасывает mute/archive/folder
-        act = self._get_or_create(chat_id, title)
-        act.leave = True
-        act.mute = False
-        act.archive = False
-
-        act.folder_title = None
+        self._get_or_create(chat_id, title).set_mode(Leave())
 
     def set_mute(self, chat_id: int, title: str, enable: bool = True) -> None:
-        """Режим 'без уведомлений'."""
-        act = self._get_or_create(chat_id, title)
-        act.mute = enable
-        act.leave = False
+        """Режим 'без уведомлений'; любой режим отменяет отписку."""
+        self._adjust(chat_id, title, mute=enable)
 
     def set_archive(self, chat_id: int, title: str, enable: bool = True) -> None:
         """Режим 'в архив' (mute выбирается отдельно)."""
-        act = self._get_or_create(chat_id, title)
-        act.archive = enable
-        act.leave = False
+        self._adjust(chat_id, title, archive=enable)
 
-    def set_folder(self, chat_id: int, title: str, folder_title: str) -> None:
-        """Режим 'читать отдельно' (добавление в папку). Id вкладки решается при apply."""
+    def set_folder(self, chat_id: int, title: str, folder_title: str | None) -> None:
+        """Режим 'читать отдельно'; folder_title=None снимает папку."""
+        self._adjust(chat_id, title, folder_title=folder_title)
+
+    def _adjust(self, chat_id: int, title: str, **changes: Any) -> None:
+        """Единственный писатель режима: заменяет mode, пустой Adjust удаляется."""
         act = self._get_or_create(chat_id, title)
-        act.folder_title = folder_title
-        act.leave = False
+        base = act.mode if isinstance(act.mode, Adjust) else Adjust()
+        act.set_mode(replace(base, **changes))
+        self._drop_if_empty(chat_id)
 
     def remove(self, chat_id: int) -> None:
         _ = self.actions.pop(chat_id, None)
 
     def is_empty(self) -> bool:
-        return not any(
-            a.leave or a.mute or a.archive or a.folder_title
-            for a in self.actions.values()
-        )
+        return not self.actions
 
     def summary(self) -> dict[str, int]:
         """Сводка запланированных изменений."""

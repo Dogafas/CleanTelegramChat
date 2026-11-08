@@ -92,24 +92,12 @@ def _apply_candidate_action(
         elif act and act.leave:
             plan.remove(cid)
         return
-    if is_selected:
-        if act_type == "mute":
-            plan.set_mute(cid, title)
-        elif act_type == "archive":
-            plan.set_archive(cid, title)
-        elif act_type == "folder" and folder_title:
-            plan.set_folder(cid, title, folder_title)
-        return
-    if not act:
-        return
     if act_type == "mute":
-        act.mute = False
+        plan.set_mute(cid, title, enable=is_selected)
     elif act_type == "archive":
-        act.archive = False
+        plan.set_archive(cid, title, enable=is_selected)
     elif act_type == "folder":
-        act.folder_title = None
-    if not (act.mute or act.archive or act.folder_title):
-        plan.remove(cid)
+        plan.set_folder(cid, title, folder_title if is_selected and folder_title else None)
 
 
 def _build_action_plan_desc(summary: dict[str, int]) -> str:
