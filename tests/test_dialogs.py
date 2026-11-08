@@ -1,40 +1,47 @@
-"""Dialog walk: dedupe, empty archive, archive failure, pagination."""
+"""Dialog walk: dedupe, empty archive, archive failure."""
 
 import unittest
 from types import SimpleNamespace as Chat
-from unittest import mock
 
-from pyrogram import raw
 from pyrogram.errors import RPCError
 
 from dialogs import list_dialogs
 
 
+class _App:
+    """get_dialogs dispatches on from_archive; archive raises by default."""
+
+    def __init__(self, main, archive=None, archive_error=None):
+        self.main = main
+        self.archive = archive or []
+        self.archive_error = archive_error
+
+    def get_dialogs(self, from_archive=None):
+        if from_archive:
+            if self.archive_error:
+                raise self.archive_error
+            return self.archive
+        return self.main
+
+
 class DialogWalkTests(unittest.TestCase):
     def test_main_failure_propagates(self):
         class App:
-            def get_dialogs(self):
+            def get_dialogs(self, from_archive=None):
                 raise RPCError("Connection reset")
 
         with self.assertRaises(RPCError):
             list_dialogs(App())
 
     def test_empty_archive_is_not_an_error(self):
-        with mock.patch("dialogs._iter_archive", return_value=[]):
-            main, archive, err = list_dialogs(Chat(get_dialogs=lambda: [Chat(chat=Chat(id=1))]))
+        main, archive, err = list_dialogs(_App([Chat(chat=Chat(id=1))]))
         self.assertIsNone(err)
         self.assertEqual(archive, [])
         self.assertEqual(main[0].chat.id, 1)
 
     def test_archive_rpc_error_keeps_main(self):
-        class App:
-            def get_dialogs(self):
-                return [Chat(chat=Chat(id=1))]
-
-            def invoke(self, *a, **k):
-                raise RPCError("Archive failure")
-
-        main, archive, err = list_dialogs(App())
+        app = _App([Chat(chat=Chat(id=1))], archive_error=RPCError("Archive failure"))
+        main, archive, err = list_dialogs(app)
         self.assertEqual(main[0].chat.id, 1)
         self.assertEqual(archive, [])
         self.assertIn("Archive failure", err)
@@ -43,59 +50,6 @@ class DialogWalkTests(unittest.TestCase):
         main_row = Chat(chat=Chat(id=1))
         dup = Chat(chat=Chat(id=1))
         extra = Chat(chat=Chat(id=2))
-        with mock.patch("dialogs._iter_archive", return_value=[dup, extra]):
-            _main, archive, err = list_dialogs(Chat(get_dialogs=lambda: [main_row]))
+        _main, archive, err = list_dialogs(_App([main_row], [dup, extra]))
         self.assertIsNone(err)
         self.assertEqual([row.chat.id for row in archive], [2])
-
-    def test_archive_reads_a_second_page(self):
-        pages = [
-            _page(1, 20, 200),
-            _page(2, 10, 100),
-            _page_empty(),
-        ]
-
-        class App:
-            def get_dialogs(self):
-                return []
-
-            def invoke(self, query, **k):
-                return pages.pop(0)
-
-            def resolve_peer(self, chat_id):
-                return raw.types.InputPeerChannel(channel_id=chat_id, access_hash=0)
-
-        def parse(_client, peer, _users, _chats):
-            return Chat(id=peer.channel_id)
-
-        with mock.patch("pyrogram.types.Chat._parse_dialog", parse):
-            _main, archive, err = list_dialogs(App())
-        self.assertIsNone(err)
-        self.assertEqual([row.chat.id for row in archive], [1, 2])
-
-
-def _dialog(channel_id: int, top: int):
-    return raw.types.Dialog(
-        peer=raw.types.PeerChannel(channel_id=channel_id),
-        top_message=top,
-        read_inbox_max_id=0,
-        read_outbox_max_id=0,
-        unread_count=0,
-        unread_mentions_count=0,
-        unread_reactions_count=0,
-        unread_poll_votes_count=0,
-        notify_settings=raw.types.PeerNotifySettings(),
-    )
-
-
-def _page(channel_id: int, top: int, date: int):
-    return Chat(
-        users=[],
-        chats=[],
-        messages=[Chat(id=top, date=date)],
-        dialogs=[_dialog(channel_id, top)],
-    )
-
-
-def _page_empty():
-    return Chat(users=[], chats=[], messages=[], dialogs=[])

@@ -209,7 +209,7 @@ class CacheTests(unittest.TestCase):
 class SortableDialogsTests(unittest.TestCase):
     def test_rpc_error_on_main_dialogs_fails(self):
         class App:
-            def get_dialogs(self):
+            def get_dialogs(self, from_archive=None):
                 raise RPCError("Connection reset")
 
         logs = []
@@ -221,11 +221,10 @@ class SortableDialogsTests(unittest.TestCase):
         main_c = Chat(id=1, type=enums.ChatType.CHANNEL, title="MainChan")
 
         class App:
-            def get_dialogs(self):
+            def get_dialogs(self, from_archive=None):
+                if from_archive:
+                    raise RPCError("Archive failure")
                 return [Chat(chat=main_c)]
-
-            def invoke(self, *a, **k):
-                raise RPCError("Archive failure")
 
         logs = []
         dialogs = sortable_dialogs(App(), log=logs.append)

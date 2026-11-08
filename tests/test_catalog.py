@@ -239,11 +239,10 @@ class SelectFromDialogsTests(unittest.TestCase):
 class ArchiveAbortTests(unittest.TestCase):
     def test_archive_error_cancels_target_chat_selection(self):
         class App:
-            def get_dialogs(self):
+            def get_dialogs(self, from_archive=None):
+                if from_archive:
+                    raise RPCError("archive down")
                 return [FakeDialog(FakeChat(1, "Group", username="g"))]
-
-            def invoke(self, *args, **kwargs):
-                raise RPCError("archive down")
 
         asked = []
         result = prompt_selection(

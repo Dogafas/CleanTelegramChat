@@ -21,21 +21,147 @@ _LABELS = {
     "gray": ("fg:ansibrightblack", "[Недостаточно данных]"),
 }
 
+def _action_note(plan: ActionPlan, chat_id: int) -> str | None:
+    act = plan.actions.get(chat_id)
+    if not act:
+        return None
+    if act.leave:
+        return "👉 в плане: отписка"
+    parts = []
+    if act.mute:
+        parts.append("без звука")
+    if act.archive:
+        parts.append("в архив")
+    if act.folder_title:
+        parts.append(f"папка '{act.folder_title}'")
+    return f"👉 в плане: {', '.join(parts)}" if parts else None
 
-def choice_row(candidate: Candidate) -> tuple[StyledTitle, Any, bool]:
+
+def choice_row(
+    candidate: Candidate,
+    *,
+    checked: bool | None = None,
+    action_note: str | None = None,
+) -> tuple[StyledTitle, Any, bool]:
     style, label = _LABELS[candidate.category]
     parts = [chat_label(candidate.chat)]
     if candidate.voice:
         parts.append(verdict_label(candidate.voice))
     if candidate.reasons:
         parts.append(", ".join(candidate.reasons))
+    if action_note:
+        parts.append(action_note)
     title = StyledTitle([(style, label), ("", f" {' | '.join(parts)}")])
-    return (title, candidate.chat, candidate.checked)
+    is_checked = candidate.checked if checked is None else checked
+    return (title, candidate.chat, is_checked)
+
+def _is_candidate_checked(
+    candidate: Candidate,
+    act_type: str,
+    plan: ActionPlan,
+    leave_initialized: bool,
+) -> bool:
+    cid = candidate.chat.id
+    act = plan.actions.get(cid)
+    if act_type == "leave":
+        return bool(act and act.leave) if leave_initialized else candidate.checked
+    if not act:
+        return False
+    mapping = {
+        "mute": act.mute,
+        "archive": act.archive,
+        "folder": bool(act.folder_title),
+        "clear": bool(act.leave or act.mute or act.archive or act.folder_title),
+    }
+    return mapping.get(act_type, False)
+
+
+def _apply_candidate_action(
+    candidate: Candidate,
+    act_type: str,
+    is_selected: bool,
+    plan: ActionPlan,
+    folder_title: str | None,
+) -> None:
+    cid = candidate.chat.id
+    title = getattr(candidate.chat, "title", str(cid))
+    act = plan.actions.get(cid)
+    if act_type == "leave":
+        if is_selected:
+            plan.set_leave(cid, title)
+        elif act and act.leave:
+            plan.remove(cid)
+        return
+    if is_selected:
+        if act_type == "mute":
+            plan.set_mute(cid, title)
+        elif act_type == "archive":
+            plan.set_archive(cid, title)
+        elif act_type == "folder" and folder_title:
+            plan.set_folder(cid, title, folder_title)
+        return
+    if not act:
+        return
+    if act_type == "mute":
+        act.mute = False
+    elif act_type == "archive":
+        act.archive = False
+    elif act_type == "folder":
+        act.folder_title = None
+    if not (act.mute or act.archive or act.folder_title):
+        plan.remove(cid)
+
+
+def _build_action_plan_desc(summary: dict[str, int]) -> str:
+    parts = []
+    if summary["leave"]:
+        parts.append(f"отписка: {summary['leave']}")
+    if summary["mute"]:
+        parts.append(f"без звука: {summary['mute']}")
+    if summary["archive"]:
+        parts.append(f"в архив: {summary['archive']}")
+    if summary["folder"]:
+        parts.append(f"папка: {summary['folder']}")
+    return f" [{', '.join(parts)}]" if parts else " [план пуст]"
+
+
+def _apply_selected_action_group(
+    act_type: str,
+    selected_ids: set[int],
+    candidates: list[Candidate],
+    plan: ActionPlan,
+    *,
+    state: dict[str, Any],
+    text_fn: Callable[..., Any],
+    app: Any,
+    restore_fn: Callable[[Any], None],
+    log: Callable[[str], None],
+) -> None:
+    if act_type == "clear":
+        for cid in selected_ids:
+            plan.remove(cid)
+        log(f"Сброшены действия для {len(selected_ids)} каналов.")
+        return
+    if act_type == "leave":
+        state["leave_initialized"] = True
+    folder_title = None
+    if act_type == "folder" and selected_ids:
+        folder_title = text_fn("Введите название папки чтения:") or "Чтение"
+        restore_fn(app)
+    for candidate in candidates:
+        _apply_candidate_action(
+            candidate,
+            act_type,
+            candidate.chat.id in selected_ids,
+            plan,
+            folder_title,
+        )
 
 
 def _manage_action_plan(
     candidates: list[Candidate],
     plan: ActionPlan,
+    state: dict[str, Any] | None = None,
     *,
     ask_chats_fn: Callable[..., Any],
     select_fn: Callable[..., Any],
@@ -44,51 +170,51 @@ def _manage_action_plan(
     restore_fn: Callable[[Any], None],
     log: Callable[[str], None],
 ) -> None:
-    actions_menu = [
-        ("❌ Запланировать отписку (leave)", "leave"),
-        ("🔕 Запланировать 'без звука' (mute)", "mute"),
-        ("📦 Запланировать 'в архив' (archive)", "archive"),
-        ("📁 Запланировать 'в папку чтения' (folder)", "folder"),
-        ("🧹 Очистить запланированное действие для каналов", "clear"),
-        ("⬅️ Назад в главное меню", "back"),
-    ]
-    act_type = select_fn("Выберите действие для применения к каналам:", actions_menu)
-    restore_fn(app)
-    if not act_type or act_type == "back":
-        return
+    if state is None:
+        state = {}
 
-    choices = [choice_row(candidate) for candidate in candidates]
-    if act_type != "leave":
-        choices = [(row[0], row[1], False) for row in choices]
-
-    selected = ask_chats_fn(choices) or []
-    restore_fn(app)
-    if not selected:
-        log("Каналы не выбраны.")
-        return
-
-    folder_title = None
-    if act_type == "folder":
-        folder_title = text_fn("Введите название папки чтения:") or "Чтение"
+    while True:
+        plan_desc = _build_action_plan_desc(plan.summary())
+        actions_menu = [
+            ("❌ Отписаться от каналов", "leave"),
+            ("🔕 Выключить звук (без уведомлений)", "mute"),
+            ("📦 Убрать в архив", "archive"),
+            ("📁 Сложить в папку для чтения", "folder"),
+            ("🧹 Сбросить запланированные действия для каналов", "clear"),
+            ("⬅️ Назад в главное меню", "back"),
+        ]
+        act_type = select_fn(f"Разбор каналов{plan_desc} — выберите действие:", actions_menu)
         restore_fn(app)
+        if not act_type or act_type == "back":
+            break
 
-    for chat in selected:
-        cid = chat.id
-        title = getattr(chat, "title", str(cid))
-        if act_type == "leave":
-            plan.set_leave(cid, title)
-        elif act_type == "mute":
-            plan.set_mute(cid, title)
-        elif act_type == "archive":
-            plan.set_archive(cid, title)
-        elif act_type == "folder" and folder_title:
-            plan.set_folder(cid, title, folder_title)
-        elif act_type == "clear":
-            plan.remove(cid)
+        leave_init = bool(state.get("leave_initialized"))
+        choices = [
+            choice_row(
+                c,
+                checked=_is_candidate_checked(c, act_type, plan, leave_init),
+                action_note=_action_note(plan, c.chat.id),
+            )
+            for c in candidates
+        ]
 
-    log(f"План обновлён: {plan.summary()}")
+        selected = ask_chats_fn(choices)
+        restore_fn(app)
+        if selected is None:
+            continue
 
-
+        _apply_selected_action_group(
+            act_type,
+            {chat.id for chat in selected},
+            candidates,
+            plan,
+            state=state,
+            text_fn=text_fn,
+            app=app,
+            restore_fn=restore_fn,
+            log=log,
+        )
+        log(f"План обновлён: {plan.summary()}")
 def _inspect_overlaps_menu(
     overlaps: list[dict[str, Any]],
     select_fn: Callable[..., Any],
@@ -258,17 +384,22 @@ def interactive_session_loop(
 ) -> None:
     plan = ActionPlan()
     overlaps = find_channel_overlaps(reviewed.for_overlap())
+    session_state: dict[str, Any] = {}
 
     while True:
         candidates = reviewed.candidates()
         summary = plan.summary()
+        red_count = sum(1 for c in candidates if c.category == "red")
+        yellow_count = sum(1 for c in candidates if c.category == "yellow")
+        gray_count = sum(1 for c in candidates if c.category == "gray")
+        stats_str = f" (🔴: {red_count}, 🟡: {yellow_count}, ⚪: {gray_count})"
         plan_str = f" [в плане: {summary['total_channels']}]" if summary["total_channels"] else ""
         menu = [
-            (f"📋 Кандидаты и режимы чтения{plan_str}", "candidates"),
-            (f"🔗 Обзор пересечений каналов ({len(overlaps)} пар)", "overlaps"),
-            ("🔍 Уточнить выбранные каналы (расширенная история)", "drilldown"),
-            ("📝 Просмотреть и применить план действий", "apply"),
-            ("↩️ Откатить изменения из журнала (Rollback)", "rollback"),
+            (f"📋 Разбор каналов{stats_str}{plan_str}", "candidates"),
+            (f"👯 Поиск каналов-дублей ({len(overlaps)} пар)", "overlaps"),
+            ("🔍 Проверить каналы глубже (история за 30 дней)", "drilldown"),
+            ("🚀 Проверить корзину и применить в Telegram", "apply"),
+            ("↩️ Вернуть как было (отменить прошлые действия)", "rollback"),
             ("🚪 Завершить работу с сессией", "exit"),
         ]
         choice = select_fn(f"Сессия {session_name} — выберите раздел:", menu)
@@ -280,6 +411,7 @@ def interactive_session_loop(
             _manage_action_plan(
                 candidates,
                 plan,
+                session_state,
                 ask_chats_fn=ask_chats_fn,
                 select_fn=select_fn,
                 text_fn=text_fn,

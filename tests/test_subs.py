@@ -10,7 +10,8 @@ from pyrogram.errors import FloodWait
 
 import subs
 import verdict
-from clean_my_subs import choice_row
+from clean_my_subs import _manage_action_plan, choice_row
+from plan import ActionPlan
 from review import Candidate
 from verdict import QUESTIONS, is_valid_verdict, text_reasons, verdict_label
 
@@ -58,6 +59,96 @@ class StyleTests(unittest.TestCase):
         self.assertEqual(title[0], ("fg:ansired", "[Отписаться]"))
         self.assertIn("нейрослоп", str(title))
 
+    def test_choice_row_supports_action_note_and_checked_override(self):
+        chat = Chat(id=2, title="Канал 2", username="k2")
+        title, value, checked = choice_row(
+            Candidate("yellow", ["частые посты"], None, False, chat),
+            checked=True,
+            action_note="👉 в плане: без звука",
+        )
+        self.assertEqual(value, chat)
+        self.assertTrue(checked)
+        self.assertIn("👉 в плане: без звука", str(title))
+
+
+class ActionPlanStatePreservationTests(unittest.TestCase):
+    def test_selection_state_preserved_across_interactions(self):
+        chat1 = Chat(id=1, title="Канал 1", username="c1")
+        chat2 = Chat(id=2, title="Канал 2", username="c2")
+        candidates = [
+            Candidate("red", ["нейрослоп"], None, True, chat1),
+            Candidate("yellow", ["частые посты"], None, False, chat2),
+        ]
+        plan = ActionPlan()
+        state: dict = {}
+
+        prompted_choices: list = []
+
+        def fake_ask_chats(choices):
+            prompted_choices.append([(c[1].id, c[2]) for c in choices])
+            return [chat2]
+
+        actions_sequence = ["leave", "back"]
+
+        def fake_select(msg, choices):
+            return actions_sequence.pop(0)
+
+        _manage_action_plan(
+            candidates,
+            plan,
+            state,
+            ask_chats_fn=fake_ask_chats,
+            select_fn=fake_select,
+            text_fn=lambda *_: "Чтение",
+            app=None,
+            restore_fn=lambda *_: None,
+            log=lambda *_: None,
+        )
+
+        # Первый вход: chat1 был True (red default), chat2 был False
+        self.assertEqual(prompted_choices[0], [(1, True), (2, False)])
+        self.assertTrue(plan.actions[2].leave)
+        self.assertNotIn(1, plan.actions)
+
+        # Повторный вход с тем же state: chat2 остаётся True, chat1 остаётся False
+        prompted_choices.clear()
+        actions_sequence = ["leave", "back"]
+
+        _manage_action_plan(
+            candidates,
+            plan,
+            state,
+            ask_chats_fn=fake_ask_chats,
+            select_fn=fake_select,
+            text_fn=lambda *_: "Чтение",
+            app=None,
+            restore_fn=lambda *_: None,
+            log=lambda *_: None,
+        )
+
+        self.assertEqual(prompted_choices[0], [(1, False), (2, True)])
+
+    def test_esc_cancel_preserves_existing_state(self):
+        chat1 = Chat(id=10, title="Канал 10")
+        candidates = [Candidate("red", ["спам"], None, True, chat1)]
+        plan = ActionPlan()
+        plan.set_leave(10, "Канал 10")
+        state = {"leave_initialized": True}
+
+        actions_sequence = ["leave", "back"]
+        _manage_action_plan(
+            candidates,
+            plan,
+            state,
+            ask_chats_fn=lambda *_: None,
+            select_fn=lambda *_, **__: actions_sequence.pop(0),
+            text_fn=lambda *_: "",
+            app=None,
+            restore_fn=lambda *_: None,
+            log=lambda *_: None,
+        )
+
+        self.assertTrue(plan.actions[10].leave)
 
 class VerdictTests(unittest.TestCase):
     def test_course_sale_alone_is_not_a_text_fail(self):

@@ -90,16 +90,17 @@ def _extract_text(m: Any) -> str:
 
 
 def _extract_forward_info(m: Any) -> tuple[int | None, int | None]:
-    fwd_chat = getattr(m, "forward_from_chat", None)
-    fwd_user = getattr(m, "forward_from", None)
-    if fwd_chat:
-        fwd_chat_id = getattr(fwd_chat, "id", None)
-    elif fwd_user:
-        fwd_chat_id = getattr(fwd_user, "id", None)
+    """(origin_chat_id, origin_message_id) из forward_origin."""
+    origin = getattr(m, "forward_origin", None)
+    if origin is None:
+        return None, None
+    origin_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
+    if origin_chat is not None:
+        fwd_chat_id = getattr(origin_chat, "id", None)
     else:
-        fwd_chat_id = getattr(m, "forward_from_chat_id", None)
-    fwd_msg_id = getattr(m, "forward_from_message_id", None)
-    return fwd_chat_id, fwd_msg_id
+        sender_user = getattr(origin, "sender_user", None)
+        fwd_chat_id = getattr(sender_user, "id", None) if sender_user is not None else None
+    return fwd_chat_id, getattr(origin, "message_id", None)
 
 
 def group_media_publications(messages: list[Any]) -> list[Publication]:
