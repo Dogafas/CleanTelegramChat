@@ -2,6 +2,7 @@
 
 import math
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,25 @@ QUESTIONS: dict[str, Any] = {
         "Обновления и развитие темы не являются провалом."
     )),
 }
+
+
+
+
+class VerdictStatus(str, Enum):
+    """Программный статус вердикта: причина gray-категории без парсинга строк."""
+
+    NO_TEXT = "no_text"
+    ERROR = "error"
+    VALID = "valid"
+
+
+def status_of(verdict: Any) -> VerdictStatus:
+    """Типизированное состояние значения вердикта: нет текста / ошибка / валиден."""
+    if verdict is None:
+        return VerdictStatus.NO_TEXT
+    if isinstance(verdict, dict) and "error" in verdict:
+        return VerdictStatus.ERROR
+    return VerdictStatus.VALID
 
 
 def has_text(posts: list[Any]) -> bool:

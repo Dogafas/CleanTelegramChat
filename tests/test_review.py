@@ -8,7 +8,8 @@ from unittest import mock
 from pyrogram import enums
 from pyrogram.errors import FloodWait
 
-from review import scan
+from review import _classify, scan
+from verdict import VerdictStatus
 
 _CLEAN = {
     "voice": "deep",
@@ -91,6 +92,15 @@ class ReviewRoutingTests(unittest.TestCase):
         self.assertEqual(cand.category, "gray")
         self.assertIn("нет текста", cand.reasons)
         self.assertEqual(called, [])
+
+    def test_gray_reasons_are_typed_not_string_parsing(self):
+        # одна категория, разные программные статусы: без парсинга русских строк
+        no_text = _classify({"chat": _channel(1, "Пустой"), "verdict": None, "posts": []})
+        errored = _classify(
+            {"chat": _channel(2, "Сломанный"), "verdict": {"error": "x"}, "posts": [_post()]}
+        )
+        self.assertEqual((no_text.category, no_text.status), ("gray", VerdictStatus.NO_TEXT))
+        self.assertEqual((errored.category, errored.status), ("gray", VerdictStatus.ERROR))
 
     def test_clean_channel_is_not_a_candidate(self):
         views = (10, 500, 40, 800, 20)

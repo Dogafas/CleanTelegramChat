@@ -27,7 +27,7 @@ from subs import (
     metric_signals,
     refine_channel_history,
 )
-from verdict import REASON_RU, has_text, is_valid_verdict, text_reasons
+from verdict import REASON_RU, VerdictStatus, has_text, is_valid_verdict, status_of, text_reasons
 
 _PRIORITY = {"red": 0, "yellow": 1, "gray": 2}
 
@@ -39,6 +39,7 @@ class Candidate:
     voice: str | None
     checked: bool
     chat: Any
+    status: VerdictStatus = VerdictStatus.VALID
 
 
 class Review:
@@ -259,9 +260,18 @@ def _classify(row: dict[str, Any]) -> Candidate | None:
                 verdict.get("voice"),
                 True,
                 chat,
+                status=VerdictStatus.VALID,
             )
         if signals:
-            return Candidate("yellow", list(signals), verdict.get("voice"), False, chat)
+            return Candidate(
+                "yellow",
+                list(signals),
+                verdict.get("voice"),
+                False,
+                chat,
+                status=VerdictStatus.VALID,
+            )
         return None
-    status = "нет текста" if not has_text(posts) else "ошибка вердикта"
-    return Candidate("gray", [status, *signals], None, False, chat)
+    status = status_of(verdict)
+    status_text = "нет текста" if status is VerdictStatus.NO_TEXT else "ошибка вердикта"
+    return Candidate("gray", [status_text, *signals], None, False, chat, status=status)
