@@ -6,9 +6,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from pyrogram.errors import FloodWait, RPCError
-
-from purge import flood_delay
+from purge import retry_on_flood
 
 POSTS_WINDOW = 30
 ANALYSIS_PAUSE = (1.0, 3.0)
@@ -357,17 +355,17 @@ def metric_signals(m: dict[str, Any]) -> list[str]:
 
 
 def leave_chat(app: Any, chat_id: int, *, sleep, rng=random.uniform, log=print) -> bool:
-    while True:
-        try:
-            app.leave_chat(chat_id)
-            return True
-        except FloodWait as e:
-            delay = flood_delay(e, rng)
-            log(f"FloodWait {delay:.0f} с, чат {chat_id}")
-            sleep(delay)
-        except RPCError as e:
-            log(f"Ошибка отписки от чата {chat_id}: {e}")
-            return False
+    _val, error = retry_on_flood(
+        lambda: app.leave_chat(chat_id),
+        sleep=sleep,
+        rng=rng,
+        log=log,
+        what=f", чат {chat_id}",
+    )
+    if error is None:
+        return True
+    log(f"Ошибка отписки от чата {chat_id}: {error}")
+    return False
 
 
 def _process_history_batch(
@@ -428,18 +426,17 @@ def refine_channel_history(
 
     while not (horizon_reached or limit_reached or history_exhausted):
         to_fetch = min(batch_size, limit - len(by_id))
-        try:
-            batch = list(app.get_chat_history(chat_id, limit=to_fetch, offset_id=oldest_id))
-        except FloodWait as e:
-            if sleep:
-                delay = flood_delay(e, rng)
-                log(f"FloodWait {delay:.0f} с при уточнении {chat_id}")
-                sleep(delay)
-                continue
-            fetch_error = f"FloodWait: {e}"
-            break
-        except Exception as e:
-            fetch_error = f"{type(e).__name__}: {e}"
+        batch, err = retry_on_flood(
+            lambda tf=to_fetch, oid=oldest_id: list(
+                app.get_chat_history(chat_id, limit=tf, offset_id=oid)
+            ),
+            sleep=sleep,
+            rng=rng,
+            log=log,
+            what=f" при уточнении {chat_id}",
+        )
+        if err is not None:
+            fetch_error = f"{type(err).__name__}: {err}"
             break
 
         if not batch:

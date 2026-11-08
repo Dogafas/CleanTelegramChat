@@ -10,11 +10,10 @@ from time import sleep as default_sleep
 from typing import Any, Callable
 
 from pyrogram import enums
-from pyrogram.errors import FloodWait
 
 from catalog import chat_label
 from dialogs import list_dialogs
-from purge import flood_delay
+from purge import retry_on_flood
 from subs import (
     ANALYSIS_PAUSE,
     POSTS_WINDOW,
@@ -158,18 +157,17 @@ def _sample(
     if full is not None:
         members = getattr(full, "members_count", 0) or 0
         description = getattr(full, "description", None) or ""
-        while True:
-            try:
-                posts = fetch_posts(app, chat.id)
-                break
-            except FloodWait as e:
-                delay = flood_delay(e, rng)
-                log(f"FloodWait {delay:.0f} с, канал {chat_label(chat)}")
-                sleep(delay)
-            except Exception as e:
-                fetch_err = f"{type(e).__name__}: {e}"
-                log(f"Ошибка при получении постов {chat_label(chat)}: {e}")
-                break
+        posts, err = retry_on_flood(
+            lambda: fetch_posts(app, chat.id),
+            sleep=sleep,
+            rng=rng,
+            log=log,
+            what=f", канал {chat_label(chat)}",
+        )
+        if err is not None:
+            fetch_err = f"{type(err).__name__}: {err}"
+            log(f"Ошибка при получении постов {chat_label(chat)}: {err}")
+        posts = posts or []
         created_at = fetch_creation_date(app, chat.id)
     else:
         fetch_err = "чат не прочитан"
@@ -209,16 +207,17 @@ def _get_chat(
     sleep: Callable[[float], None],
     rng: Callable[..., float],
 ) -> Any:
-    while True:
-        try:
-            return app.get_chat(chat.id)
-        except FloodWait as e:
-            delay = flood_delay(e, rng)
-            log(f"FloodWait {delay:.0f} с, канал {chat_label(chat)}")
-            sleep(delay)
-        except Exception as e:
-            log(f"Ошибка при получении {chat_label(chat)}: {e}")
-            return None
+    val, error = retry_on_flood(
+        lambda: app.get_chat(chat.id),
+        sleep=sleep,
+        rng=rng,
+        log=log,
+        what=f", канал {chat_label(chat)}",
+    )
+    if error is None:
+        return val
+    log(f"Ошибка при получении {chat_label(chat)}: {error}")
+    return None
 
 
 def _attach(row: dict[str, Any], evaluate: Callable[..., Any], log: Callable[[str], None]) -> None:
