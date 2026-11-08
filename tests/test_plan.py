@@ -179,6 +179,126 @@ class PlanExecutionAndRollbackTests(unittest.TestCase):
             self.assertNotIn("token", content)
             self.assertNotIn("secret", content)
 
+    def test_second_apply_merges_journal_not_overwrites(self):
+        # два apply без отката: откат нужен обеим партиям изменений
+        mute_by_chat: dict[int, int] = {500: 0, 501: 0}
+
+        def fake_invoke(req: Any) -> Any:
+            name = type(req).__name__
+            cid = getattr(getattr(req.peer, "peer", None), "channel_id", 0)
+            if "GetNotifySettings" in name:
+                return Chat(mute_until=mute_by_chat.get(cid, 0))
+            if "UpdateNotifySettings" in name:
+                mute_by_chat[cid] = req.settings.mute_until
+                return True
+            return None
+
+        app = Chat(resolve_peer=lambda cid: Chat(channel_id=cid), invoke=fake_invoke)
+
+        with tempfile.TemporaryDirectory() as td:
+            j_dir = Path(td)
+            for chat_id in (500, 501):
+                plan = ActionPlan()
+                plan.set_mute(chat_id, f"Канал {chat_id}")
+                apply_action_plan(app, plan, session_name="s3", journal_dir=j_dir)
+
+            loaded = load_rollback_journal("s3", root_dir=j_dir)
+            self.assertEqual({r["chat_id"] for r in loaded}, {500, 501})
+
+    def test_rollback_consumes_journal(self):
+        # после успешного отката журнал пуст, повторный откат — не «изменено вручную»
+        notify_state = {"mute_until": 0}
+
+        def fake_invoke(req: Any) -> Any:
+            name = type(req).__name__
+            if "GetNotifySettings" in name:
+                return Chat(mute_until=notify_state["mute_until"])
+            if "UpdateNotifySettings" in name:
+                notify_state["mute_until"] = req.settings.mute_until
+                return True
+            return None
+
+        app = Chat(resolve_peer=lambda cid: Chat(channel_id=cid), invoke=fake_invoke)
+        plan = ActionPlan()
+        plan.set_mute(600, "Канал 600")
+
+        with tempfile.TemporaryDirectory() as td:
+            j_dir = Path(td)
+            apply_action_plan(app, plan, session_name="s4", journal_dir=j_dir)
+            results = rollback_session(app, session_name="s4", journal_dir=j_dir)
+            self.assertEqual(results[0]["status"], "restored")
+            self.assertEqual(load_rollback_journal("s4", root_dir=j_dir), [])
+            # повторный откат: записей нет, ложного skip нет
+            self.assertEqual(rollback_session(app, session_name="s4", journal_dir=j_dir), [])
+
+    def test_archive_rollback_guard(self):
+        # откат архива не затирает ручную разархивацию, как у mute
+        archive_state = {"folder_id": 0}
+        calls: list[str] = []
+        app = Chat(
+            get_chat=lambda cid: Chat(folder_id=archive_state["folder_id"]),
+            archive_chats=lambda ids: (
+                (archive_state.update(folder_id=1), calls.append("archive")),
+                None,
+            )[1],
+            unarchive_chats=lambda ids: (
+                (archive_state.update(folder_id=0), calls.append("unarchive")),
+                None,
+            )[1],
+        )
+        plan = ActionPlan()
+        plan.set_archive(700, "Канал 700")
+
+        with tempfile.TemporaryDirectory() as td:
+            j_dir = Path(td)
+            apply_action_plan(app, plan, session_name="s5", journal_dir=j_dir)
+            self.assertEqual(archive_state["folder_id"], 1)  # fake-архивация применилась
+
+            # откат: состояние всё ещё «в архиве» → restore
+            results = rollback_session(app, session_name="s5", journal_dir=j_dir)
+            self.assertEqual(results[0]["status"], "restored")
+            self.assertEqual(archive_state["folder_id"], 0)  # fake-разархивация сработала
+            self.assertEqual(calls.count("unarchive"), 1)
+
+            # пользователь разархивировал сам: откат не должен трогать
+            apply_action_plan(app, plan, session_name="s5", journal_dir=j_dir)
+            archive_state["folder_id"] = 0  # «ручная» разархивация
+            results = rollback_session(app, session_name="s5", journal_dir=j_dir)
+            self.assertEqual(results[0]["status"], "skipped")
+            self.assertIn("вручную", results[0]["detail"])
+            self.assertEqual(calls.count("unarchive"), 1)
+
+    def test_rollback_error_keeps_record_in_journal(self):
+        # неудавшийся откат остаётся в журнале для повторной попытки
+        def fake_invoke(req: Any) -> Any:
+            raise RuntimeError("сеть недоступна")
+
+        app_bad = Chat(
+            resolve_peer=lambda cid: Chat(channel_id=cid),
+            invoke=fake_invoke,
+        )
+
+        def invoke_ok(req: Any) -> Any:
+            name = type(req).__name__
+            if "GetNotifySettings" in name:
+                return Chat(mute_until=0)
+            if "UpdateNotifySettings" in name:
+                return True
+            return None
+
+        app_ok = Chat(resolve_peer=lambda cid: Chat(channel_id=cid), invoke=invoke_ok)
+        plan = ActionPlan()
+        plan.set_mute(800, "Канал 800")
+
+        with tempfile.TemporaryDirectory() as td:
+            j_dir = Path(td)
+            apply_action_plan(app_ok, plan, session_name="s6", journal_dir=j_dir)
+            results = rollback_session(app_bad, session_name="s6", journal_dir=j_dir)
+            self.assertEqual(results[0]["status"], "error")
+            loaded = load_rollback_journal("s6", root_dir=j_dir)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["chat_id"], 800)
+
 
 if __name__ == "__main__":
     unittest.main()
