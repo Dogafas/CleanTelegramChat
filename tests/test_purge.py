@@ -135,6 +135,17 @@ class RetryOnFloodTests(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
         self.assertEqual(sleeps, [])
 
+    def test_zero_attempts_never_calls_op(self):
+        calls: list[int] = []
+
+        val, err = retry_on_flood(
+            lambda: calls.append(1), sleep=None, max_attempts=0, log=lambda *_: None
+        )
+        self.assertIsNone(val)
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("max_attempts=0", str(err))
+        self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

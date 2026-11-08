@@ -44,7 +44,7 @@ def retry_on_flood(
             sleep(delay)
         except Exception as e:
             return None, e
-    return None, RuntimeError("unreachable")
+    return None, RuntimeError(f"retry_on_flood: нет попыток (max_attempts={max_attempts})")
 
 
 def purge_chat(app, chat_id, *, sleep, rng=random.uniform, log=print) -> None:
