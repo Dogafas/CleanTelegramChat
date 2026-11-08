@@ -21,8 +21,9 @@ Done means both commands above are green. Hook: `.githooks/pre-commit`. Fresh cl
 
 ## Pointers
 
-- Subscription scoring, Jev, unsubscribe → `docs/adr/0007-subscription-quality-scoring.md`, `docs/adr/0009-text-fail-unsubscribe.md`, `docs/channel-telegram-signals.md`
+- Subscription scoring, Jev, unsubscribe, reading modes, rollback → `docs/adr/0007-subscription-quality-scoring.md`, `docs/adr/0009-text-fail-unsubscribe.md`, `docs/adr/0010-reading-modes-and-rollback-journal.md`, `docs/channel-telegram-signals.md`
 - Chat folders → `docs/adr/0008-chat-folder-classification.md`
 - Kurigram types → `.venv/Lib/site-packages/pyrogram/types/`. Plan already names the fields → write the artifact, skip the library.
 - Jev `state` is text only (`channel`, `description`, `posts`). Quality Score and numeric metrics stay out. ADR 0009.
 - Слои «CLI-сценарии / ядро» → `tests/test_layers.py`: ядро не импортирует CLI, сценарии не импортируют друг друга. Новый корневой модуль — отнести к слою там же.
+- Модули ядра: `review` (скан, покрытие, кандидаты), `plan` (режимы чтения, журнал отката), `overlap` (межканальные совпадения), `chat_folder` (точечные мутации папок), `dialogs` (обход диалогов и архива), `subs` (метрики, склейка альбомов), `purge` (очистка, `retry_on_flood`).

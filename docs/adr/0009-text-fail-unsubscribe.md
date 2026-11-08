@@ -21,8 +21,11 @@ Course selling alone is NOT an independent text failure (legitimate course sales
 Candidate UI Routing:
 1. **RED «Отписаться»**: Valid verdict with $\ge 1$ semantic text failures. Checked by default.
 2. **YELLOW «Проверить»**: Valid verdict with no text failures, but indirect metric signals exist (e.g. frequency > 60 posts/month, low engagement). Unchecked by default.
-3. **GRAY «Недостаточно данных»**: No usable semantic verdict (media-only / no text, API error, malformed output). Unchecked by default; takes precedence over metric colors, showing indirect signals as secondary reasons.
+3. **GRAY «Недостаточно данных»**: No usable semantic verdict (media-only / no text, API error, malformed output). Unchecked by default; takes precedence over metric colors, showing indirect signals as secondary reasons. Programmatic reason uses typed `VerdictStatus` (`VALID`, `NO_TEXT`, `ERROR` via `status_of(verdict)`), displaying `"нет текста"` or `"ошибка вердикта"` without fragile string parsing.
 4. **Clean**: Valid verdict with no text failures and no indirect signals is excluded from candidates.
+
+Architecture & Seams:
+Subscription scanning, coverage tracking, and candidate routing are encapsulated behind the `review.py` module (`Review`, `Candidate`). Callers interact through domain methods instead of raw dict keys.
 
 Sorting in checkbox UI: RED, then YELLOW, then GRAY.
 Row contents: label + chat name + voice (if available) + concrete triggered reasons (no total scores and no misleading Noul percentages). Color is applied only to the short label. Manual checkbox changes and explicit user confirmation remain mandatory before any unsubscribe operation.

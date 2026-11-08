@@ -1,13 +1,18 @@
 # Инвентарь сигналов Telegram и что можно отдать Jev
 
-## Уже снимаем
+## Уже снимаем и используем
 
-- **Скан (`review.py` `scan`)**:
-  - `list_dialogs` читает основной список и архив; в оценку попадают `ChatType.CHANNEL`, включая архив.
-  - `get_chat(chat.id)` вызывается ради `members_count` и `description`.
-  - `get_chat_history(chat_id, limit=30)` выгружает срез из последних 30 постов.
+- **Скан и уточнение (`review.py` `scan`, `subs.py` `refine_channel_history`)**:
+  - `list_dialogs` (`dialogs.py`) читает основной список и архив; в оценку попадают `ChatType.CHANNEL`, включая архив.
+  - `get_chat(chat.id)` вызывается ради `members_count` и `description` (с защитой `retry_on_flood`).
+  - `get_chat_history(chat_id, limit=30)` выгружает срез из последних 30 постов (с защитой `retry_on_flood`); при уточнении («Проверить каналы глубже») лимит по умолчанию составляет 14 дней и до 200 постов (настраивается пользователем).
   - `get_messages(chat_id, 1)` используется как прокси даты создания канала.
+  - `compute_coverage` рассчитывает статус покрытия (`SampleCoverage`), окно в днях/часах и число обрезанных текстов.
 
+- **Склейка публикаций и сигналы структуры (`subs.py` `group_media_publications`, `overlap.py`)**:
+  - `media_group_id`: сообщения одного медиальбома объединяются в одну публикацию `Publication`, предотвращая искажение частоты и метрик.
+  - `forward_origin` (`chat`, `sender_chat`, `sender_user`, `message_id`): извлекаются в `_extract_forward_info` для выявления чистых пересылок и индекса дублей (`overlap.py`).
+  - `entities` / `caption_entities`: разметка ссылок (`URL`, `TEXT_LINK`) извлекается в `overlap.py` `extract_urls` для локального выявления общих первоисточников.
 - **Извлечение полей постов (`compute_metrics`)**:
   - `text` / `caption` сообщений;
   - `views` (просмотры, строго сохраняя `None` при отсутствии данных);
@@ -56,7 +61,6 @@
   - `has_direct_messages_group` — наличие группы личных сообщений.
 
 - **Из выгрузки `get_chat_history`** (объекты `Message`):
-  - `forward_origin` — данные о первоисточнике репоста;
   - тип медиа — `photo`, `video`, `animation`, `voice`, `video_note`, `document`, `sticker`, `poll`, `web_page`;
   - `author_signature` — подпись автора под конкретным постом;
   - `edit_date` — дата и факт редактирования публикации;
@@ -64,11 +68,8 @@
   - `fact_check.text` — текст фактчека при его наличии;
   - `has_media_spoiler` — скрыто ли медиа под спойлер;
   - `via_bot` — публикация через inline-бота;
-  - `media_group_id` — идентификатор альбома;
-  - `entities` / `caption_entities` — полная разметка сущностей текста;
   - разбивка реакций по конкретным эмодзи и `paid_reactors`;
   - `sender_boost_count` — число бустов от автора.
-
 - **Комментарии в истории постов**:
   - Число комментариев передаётся только в raw-структуре `Message.replies`. Высокоуровневый `types.Message` в Kurigram поле `replies` не парсит.
   - Отдельный RPC-вызов `get_discussion_replies_count` на каждый пост делать нельзя (создаёт 30 сетевых запросов на канал).
@@ -100,6 +101,7 @@
 
 ## Источники
 
-- `subs.py` (`compute_metrics`, `metric_signals`), `review.py` (`scan`), `verdict.py` (`evaluate`);
+- `subs.py` (`compute_metrics`, `metric_signals`, `group_media_publications`), `review.py` (`scan`, `Review`), `verdict.py` (`evaluate`);
+- `overlap.py` (`find_channel_overlaps`), `plan.py` (`ActionPlan`, `apply_action_plan`, `rollback_session`), `purge.py` (`retry_on_flood`);
 - Kurigram 2.2.26;
-- `docs/adr/0007-subscription-quality-scoring.md`, `docs/adr/0009-text-fail-unsubscribe.md`.
+- `docs/adr/0007-subscription-quality-scoring.md`, `docs/adr/0009-text-fail-unsubscribe.md`, `docs/adr/0010-reading-modes-and-rollback-journal.md`.
