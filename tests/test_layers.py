@@ -11,8 +11,9 @@ import ast
 import unittest
 from pathlib import Path
 
-CLI = {"clean_my_messages", "clean_my_subs", "people", "sort_chats"}
+CLI = {"clean_my_bots", "clean_my_messages", "clean_my_subs", "people", "sort_chats"}
 CORE = {
+    "bots",
     "catalog",
     "chat_folder",
     "dialogs",

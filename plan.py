@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from chat_folder import add_peer, remove_peer
+from purge import retry_on_flood
 from subs import leave_chat
 
 FOREVER_MUTE = 2147483647
@@ -340,6 +341,115 @@ def apply_action_plan(
     return reports
 
 
+@dataclass(frozen=True)
+class BotAction:
+    """Запланированное действие над ботом (ADR 0011): стоп и/или удаление диалога."""
+
+    chat_id: int
+    title: str
+    stop: bool = False
+    delete: bool = False
+
+
+def _bot_blocked(app: Any, chat_id: int) -> bool:
+    """Текущее состояние блокировки бота (state-guard отката)."""
+    from pyrogram import raw  # noqa: PLC0415
+
+    peer = app.resolve_peer(chat_id)
+    full = app.invoke(
+        raw.functions.users.GetFullUser(
+            id=raw.types.InputUser(user_id=peer.user_id, access_hash=peer.access_hash)
+        )
+    )
+    return bool(getattr(full.full_user, "blocked", False))
+
+
+def apply_bot_actions(
+    app: Any,
+    bots: list[BotAction],
+    *,
+    session_name: str = "session",
+    journal_dir: Path | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    rng: Callable[..., float] = random.uniform,
+    log: Callable[[str], None] = print,
+) -> list[dict[str, Any]]:
+    """Остановка (block_user) и удаление диалога (delete_chat_history) ботов (ADR 0011).
+
+    Стоп precedes delete. В журнал попадает только реально применённый стоп
+    (уже заблокированный бот — already_set, записи нет); удаление необратимо
+    и фиксируется с restorable: False.
+    """
+    reports: list[dict[str, Any]] = []
+    journal_records: list[dict[str, Any]] = []
+
+    for bot in bots:
+        if bot.stop:
+            try:
+                if _bot_blocked(app, bot.chat_id):
+                    reports.append({
+                        "chat_id": bot.chat_id, "title": bot.title,
+                        "action": "stop", "status": "already_set",
+                        "detail": "бот уже остановлен",
+                    })
+                else:
+                    _, error = retry_on_flood(
+                        lambda bot=bot: app.block_user(bot.chat_id),
+                        sleep=sleep, rng=rng, log=log,
+                        what=f", бот {bot.title}",
+                    )
+                    if error is not None:
+                        raise error
+                    journal_records.append({
+                        "action": "stop",
+                        "chat_id": bot.chat_id,
+                        "prev_state": {"blocked": False},
+                        "applied_state": {"blocked": True},
+                    })
+                    reports.append({
+                        "chat_id": bot.chat_id, "title": bot.title,
+                        "action": "stop", "status": "applied",
+                        "detail": "бот остановлен",
+                    })
+            except Exception as e:
+                reports.append({
+                    "chat_id": bot.chat_id, "title": bot.title,
+                    "action": "stop", "status": "error",
+                    "detail": f"ошибка остановки: {e}",
+                })
+        if bot.delete:
+            try:
+                _, error = retry_on_flood(
+                    lambda bot=bot: app.delete_chat_history(bot.chat_id),
+                    sleep=sleep, rng=rng, log=log,
+                    what=f", бот {bot.title}",
+                )
+                if error is not None:
+                    raise error
+                journal_records.append({
+                    "action": "delete_chat",
+                    "chat_id": bot.chat_id,
+                    "restorable": False,
+                })
+                reports.append({
+                    "chat_id": bot.chat_id, "title": bot.title,
+                    "action": "delete_chat", "status": "applied",
+                    "detail": "диалог удалён",
+                })
+            except Exception as e:
+                reports.append({
+                    "chat_id": bot.chat_id, "title": bot.title,
+                    "action": "delete_chat", "status": "error",
+                    "detail": f"ошибка удаления диалога: {e}",
+                })
+
+    if journal_records:
+        save_rollback_journal(session_name, journal_records, root_dir=journal_dir)
+        log(f"Журнал отката сохранён: {len(journal_records)} записей.")
+
+    return reports
+
+
 def _rollback_mute(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
     from pyrogram import raw  # noqa: PLC0415
 
@@ -413,10 +523,37 @@ def _rollback_folder(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
         return {"chat_id": chat_id, "action": "folder", "status": "error", "detail": str(e)}
 
 
+def _rollback_stop(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
+    chat_id = rec.get("chat_id")
+    try:
+        # State-guard: пользователь сам разблокировал бота — не блокируем повторно
+        if not _bot_blocked(app, chat_id):
+            return {
+                "chat_id": chat_id, "action": "stop", "status": "skipped",
+                "detail": "бот был разблокирован вручную — не трогаем",
+            }
+        app.unblock_user(chat_id)
+        return {
+            "chat_id": chat_id, "action": "stop", "status": "restored",
+            "detail": "бот снова работает (блокировка снята)",
+        }
+    except Exception as e:
+        return {"chat_id": chat_id, "action": "stop", "status": "error", "detail": str(e)}
+
+
+def _rollback_delete_chat(_app: Any, rec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "chat_id": rec.get("chat_id"), "action": "delete_chat", "status": "skipped",
+        "detail": "удаление диалога необратимо",
+    }
+
+
 _ROLLBACK_HANDLERS = {
     "mute": _rollback_mute,
     "archive": _rollback_archive,
     "folder": _rollback_folder,
+    "stop": _rollback_stop,
+    "delete_chat": _rollback_delete_chat,
 }
 
 
