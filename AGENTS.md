@@ -10,6 +10,8 @@
 ```bash
 uv sync
 uv run ruff check
+uv run vulture .
+uv run deptry .
 uv run python -m unittest discover tests
 ```
 
@@ -17,7 +19,7 @@ Entry points: `clean_my_messages.py`, `clean_my_subs.py`, `clean_my_bots.py`, `s
 
 ## Check
 
-Done means both commands above are green. Hook: `.githooks/pre-commit`. Fresh clone: `git config core.hooksPath .githooks`.
+Done means all four commands above (after `uv sync`) are green. Hook: `.githooks/pre-commit`. Fresh clone: `git config core.hooksPath .githooks`.
 
 ## Pointers
 

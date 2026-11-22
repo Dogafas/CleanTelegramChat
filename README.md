@@ -123,9 +123,12 @@ uv run python clean_my_subs.py
 
 _Если у вас возникнут вопросы или проблемы, пожалуйста, создайте issue в репозитории проекта_.
 
-## Тесты
+## Тесты и статические проверки
 
 ```bash
+uv run ruff check
+uv run vulture .   # мёртвый код
+uv run deptry .    # лишние/недостающие зависимости
 uv run python -m unittest discover -s tests -t .
 ```
 

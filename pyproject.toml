@@ -13,7 +13,18 @@ dependencies = [
 package = false
 
 [dependency-groups]
-dev = ["ruff>=0.6"]
+dev = [
+    "deptry>=0.25.1",
+    "ruff>=0.6",
+    "vulture>=2.16",
+]
+
+[tool.vulture]
+paths = ["."]
+exclude = [".venv", "sessions"]
+min_confidence = 60
+# параметры фейков/колбэков в тестах зеркалят реальные сигнатуры API
+ignore_names = ["from_user", "revoke", "offset_id", "exc_type", "exc_val", "exc_tb", "q", "app_"]
 
 [tool.ruff]
 line-length = 100
