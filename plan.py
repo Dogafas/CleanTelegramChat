@@ -573,23 +573,30 @@ def rollback_session(
     session_name: str,
     *,
     journal_dir: Path | None = None,
+    actions: set[str] | None = None,
     log: Callable[[str], None] = print,
 ) -> list[dict[str, Any]]:
     """Безопасный откат применённых изменений (Section 3).
 
     Откат потребляет журнал: restored/skipped записи уходят из файла,
     error остаются — их можно откатить повторным запуском.
+    actions — откатить только записи перечисленных действий; прочие
+    остаются в журнале нетронутыми (None — весь журнал).
     """
     # ponytail: восстанавливаем только то, что всё ещё соответствует применённому нами
     records = load_rollback_journal(session_name, root_dir=journal_dir)
     if not records:
         log(f"Для сессии {session_name} нет записей в журнале отката.")
         return []
+    selected = [r for r in records if actions is None or r.get("action") in actions]
+    kept = [r for r in records if not (actions is None or r.get("action") in actions)]
+    if not selected:
+        return []
 
     results: list[dict[str, Any]] = []
     failed_records: list[dict[str, Any]] = []
 
-    for rec in reversed(records):
+    for rec in reversed(selected):
         if not rec.get("chat_id"):
             continue
         result = _rollback_record(app, rec)
@@ -597,10 +604,10 @@ def rollback_session(
         if result["status"] == "error":
             failed_records.append(rec)
 
-    if failed_records:
-        failed_records.reverse()  # прежний порядок журнала
-        _write_journal(_journal_path(session_name, journal_dir), session_name, failed_records)
-        log(f"В журнале осталось {len(failed_records)} записей с ошибками отката.")
+    final_journal = kept + list(reversed(failed_records))  # прежний порядок журнала
+    if final_journal:
+        _write_journal(_journal_path(session_name, journal_dir), session_name, final_journal)
+        log(f"В журнале осталось {len(final_journal)} записей (ошибки отката или вне области).")
     else:
         _journal_path(session_name, journal_dir).unlink(missing_ok=True)
         log("Журнал отката очищен.")

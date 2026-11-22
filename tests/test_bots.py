@@ -12,7 +12,15 @@ from pyrogram.errors import FloodWait
 
 from bots import BotInfo, bot_signals, classify, probe_bot, scan_bots
 from clean_my_bots import _bot_row, _ordered, _probe_menu
-from plan import BotAction, apply_bot_actions, load_rollback_journal, rollback_session
+from plan import (
+    FOREVER_MUTE,
+    ActionPlan,
+    BotAction,
+    apply_action_plan,
+    apply_bot_actions,
+    load_rollback_journal,
+    rollback_session,
+)
 
 _NOW = datetime(2026, 11, 23, tzinfo=timezone.utc)
 NO_SLEEP = lambda _seconds: None  # noqa: E731
@@ -483,6 +491,59 @@ class ProbeTests(unittest.TestCase):
         result = probe_bot(app, 9, wait_s=6, poll_s=2, sleep=lambda _s: None)
         self.assertEqual(result, "silent")
         self.assertTrue(state["raised"])
+
+
+class RollbackFilterTests(unittest.TestCase):
+    def test_action_filter_keeps_other_records(self):
+        # откат остановки не трогает mute-запись прошлых запусков в том же журнале
+        notify_state = {"mute_until": 0}
+
+        app = FakeApp()
+        blocked = app.blocked  # один dict: FakeApp копирует переданный
+        blocked[910] = False
+
+        def fake_invoke(req: Any) -> Any:
+            name = type(req).__name__
+            if "GetNotifySettings" in name:
+                return SimpleNamespace(mute_until=notify_state["mute_until"])
+            if "UpdateNotifySettings" in name:
+                notify_state["mute_until"] = req.settings.mute_until
+                return True
+            if "GetFullUser" in name:
+                return SimpleNamespace(full_user=SimpleNamespace(blocked=blocked[req.id.user_id]))
+            return None
+
+        app.invoke = fake_invoke  # type: ignore[method-assign]
+        with tempfile.TemporaryDirectory() as td:
+            plan = ActionPlan()
+            plan.set_mute(900, "Канал 900")
+            apply_action_plan(
+                app, plan, session_name="mix", journal_dir=Path(td), log=lambda _m: None
+            )
+            apply_bot_actions(
+                app,
+                [BotAction(910, "Бот 910", stop=True)],
+                session_name="mix",
+                journal_dir=Path(td),
+                log=lambda _m: None,
+            )
+            self.assertEqual(notify_state["mute_until"], FOREVER_MUTE)
+            self.assertTrue(blocked[910])
+
+            results = rollback_session(
+                app, "mix", journal_dir=Path(td), actions={"stop"}, log=lambda _m: None
+            )
+            self.assertEqual([r["action"] for r in results], ["stop"])
+            self.assertFalse(blocked[910])
+            self.assertEqual(notify_state["mute_until"], FOREVER_MUTE)  # mute не тронут
+            kept = load_rollback_journal("mix", root_dir=Path(td))
+            self.assertEqual([r["action"] for r in kept], ["mute"])
+
+            # полный откат снимает mute
+            results = rollback_session(app, "mix", journal_dir=Path(td), log=lambda _m: None)
+            self.assertEqual([r["action"] for r in results], ["mute"])
+            self.assertEqual(notify_state["mute_until"], 0)
+            self.assertEqual(load_rollback_journal("mix", root_dir=Path(td)), [])
 
 
 if __name__ == "__main__":

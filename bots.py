@@ -24,8 +24,6 @@ AD_SHARE_BAD = 0.25        # ≥ 25% входящих бота несут рек
 
 AD_ENTITY_TYPES = (enums.MessageEntityType.URL, enums.MessageEntityType.TEXT_LINK)
 
-_PRIORITY = {"red": 0, "yellow": 1, "gray": 2}
-
 
 @dataclass
 class BotInfo:

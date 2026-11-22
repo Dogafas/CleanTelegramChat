@@ -147,7 +147,8 @@ def _bot_session(
     stopped = any(r["action"] == "stop" and r["status"] == "applied" for r in reports)
     if stopped and confirm("Откатить остановку (разблокировать остановленных ботов)?"):
         restore(app)
-        rollback_session(app, session_name, log=log)
+        # Только остановки: mute/archive/folder прошлых запусков остаются в журнале
+        rollback_session(app, session_name, actions={"stop"}, log=log)
 
 
 def clean_bots(
