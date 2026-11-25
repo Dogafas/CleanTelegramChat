@@ -19,6 +19,7 @@ from purge import retry_on_flood
 from subs import (
     ANALYSIS_PAUSE,
     POSTS_WINDOW,
+    Publication,
     compute_coverage,
     compute_metrics,
     fetch_creation_date,
@@ -52,10 +53,31 @@ def category_counts(candidates: list[Candidate]) -> dict[str, int]:
     return counts
 
 
-class Review:
-    """One session's scanned subscriptions. Callers do not read row keys."""
+@dataclass
+class ChannelScan:
+    """Скан одной Channel Subscription: сэмпл постов, покрытие, метрики, вердикт.
 
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
+    coverage и metrics — JSON-грузы subs, verdict — ответ Jev; для внешних
+    JSON-полезных грузов dict[str, Any] допустим (AGENTS).
+    """
+
+    chat: Chat
+    description: str
+    posts: list[Message]
+    publications: list[Publication]
+    coverage: dict[str, Any]
+    metrics: dict[str, Any]
+    signals: list[str]
+    verdict: dict[str, Any] | None = None
+
+
+class Review:
+    """Одна сессия сканированных Channel Subscription; строки — ChannelScan.
+
+    Вызывающие читают кандидатов, каналы и вход overlap, не поля скана.
+    """
+
+    def __init__(self, rows: list[ChannelScan]) -> None:
         self._rows = rows
 
     def candidates(self) -> list[Candidate]:
@@ -64,18 +86,11 @@ class Review:
         return items
 
     def chats(self) -> list[Chat]:
-        return [row["chat"] for row in self._rows]
+        return [row.chat for row in self._rows]
 
     def for_overlap(self) -> list[OverlapInput]:
         """Вход find_channel_overlaps: канал с его публикациями."""
-        return [
-            OverlapInput(
-                chat=row["chat"],
-                publications=row.get("publications")
-                or group_media_publications(row.get("posts") or []),
-            )
-            for row in self._rows
-        ]
+        return [OverlapInput(chat=row.chat, publications=row.publications) for row in self._rows]
 
     def refresh(
         self,
@@ -91,24 +106,23 @@ class Review:
     ) -> None:
         selected = set(chat_ids)
         for row in self._rows:
-            chat = row["chat"]
-            if chat.id not in selected:
+            chat = row.chat
+            chat_id = chat.id
+            if chat_id is None or chat_id not in selected:
                 continue
-            title = getattr(chat, "title", str(chat.id))
+            title = getattr(chat, "title", str(chat_id))
             log(f"Уточнение истории для «{title}» (до {horizon_days} дн., лимит {limit})…")
             full = _get_chat(app, chat, log, sleep, rng)
             if full is not None:
                 members = getattr(full, "members_count", 0) or 0
-                desc = getattr(full, "description", None) or row.get("description") or ""
-                row["description"] = desc
+                row.description = getattr(full, "description", None) or row.description
             else:
                 members = 0
-            cov_old = row.get("coverage")
-            scan_dt = cov_old.get("scan_started_at") if cov_old else None
+            scan_dt = row.coverage.get("scan_started_at")
             all_msgs, pubs, cov = refine_channel_history(
                 app,
-                chat.id,
-                row.get("posts") or [],
+                chat_id,
+                row.posts,
                 horizon_days=horizon_days,
                 limit=limit,
                 scan_started_at=scan_dt,
@@ -116,11 +130,11 @@ class Review:
                 rng=rng,
                 log=log,
             )
-            row["posts"] = all_msgs
-            row["publications"] = pubs
-            row["coverage"] = cov
-            row["metrics"] = compute_metrics(chat, pubs, members)
-            row["signals"] = metric_signals(row["metrics"])
+            row.posts = all_msgs
+            row.publications = pubs
+            row.coverage = cov
+            row.metrics = compute_metrics(chat, pubs, members)
+            row.signals = metric_signals(row.metrics)
             _attach(row, evaluate, log)
             log(f"Уточнено: {format_coverage_short(cov)}")
 
@@ -146,7 +160,7 @@ def scan(
         return Review([])
 
     log(f"Найдено каналов: {len(channels)}. Сбор метрик по последним постам…")
-    rows: list[dict[str, Any]] = []
+    rows: list[ChannelScan] = []
     scan_start = datetime.now(UTC)
     for i, chat in enumerate(channels):
         if i:
@@ -165,7 +179,7 @@ def _sample(
     log: Callable[[str], None],
     sleep: Callable[[float], None],
     rng: Callable[..., float],
-) -> dict[str, Any]:
+) -> ChannelScan:
     full = _get_chat(app, chat, log, sleep, rng)
     posts: list[Message] = []
     created_at = None
@@ -208,15 +222,15 @@ def _sample(
         )
     signals_str = f" | сигналы: {'; '.join(signals)}" if signals else " | сигналы: в норме"
     log(f"{chat_label(chat)}{growth_str}{signals_str} [{format_coverage_short(coverage)}]")
-    return {
-        "chat": chat,
-        "description": description,
-        "metrics": metrics,
-        "signals": signals,
-        "posts": posts,
-        "publications": pubs,
-        "coverage": coverage,
-    }
+    return ChannelScan(
+        chat=chat,
+        description=description,
+        posts=posts,
+        publications=pubs,
+        coverage=coverage,
+        metrics=metrics,
+        signals=signals,
+    )
 
 
 def _get_chat(
@@ -241,36 +255,35 @@ def _get_chat(
     return None
 
 
-def _attach(row: dict[str, Any], evaluate: Callable[..., Any], log: Callable[[str], None]) -> None:
-    posts = row.get("publications") or row.get("posts") or []
+def _attach(scan: ChannelScan, evaluate: Callable[..., Any], log: Callable[[str], None]) -> None:
+    posts = scan.publications or scan.posts
     if not has_text(posts):
-        row["verdict"] = None
-        if "coverage" in row:
-            row["coverage"]["model_texts_count"] = 0
-            row["coverage"]["truncated_texts_count"] = 0
+        scan.verdict = None
+        scan.coverage["model_texts_count"] = 0
+        scan.coverage["truncated_texts_count"] = 0
         return
-    title = getattr(row["chat"], "title", None) or "без названия"
+    title = getattr(scan.chat, "title", None) or "без названия"
     log(f"Запрос вердикта LLM: {title}")
     try:
-        verdict = evaluate(title, posts, description=row.get("description") or "")
+        verdict = evaluate(title, posts, description=scan.description or "")
     except Exception:
         logging.exception("Вердикт не удался, канал без вердикта")
-        row["verdict"] = {"error": "см. traceback в логе"}
+        scan.verdict = {"error": "см. traceback в логе"}
         return
     if not is_valid_verdict(verdict):
-        row["verdict"] = {"error": "некорректный ответ модели"}
+        scan.verdict = {"error": "некорректный ответ модели"}
         return
-    row["verdict"] = verdict
-    if "coverage" in row and isinstance(verdict, dict):
-        row["coverage"]["model_texts_count"] = verdict.get("model_texts_count", 0)
-        row["coverage"]["truncated_texts_count"] = verdict.get("truncated_texts_count", 0)
+    scan.verdict = verdict
+    if isinstance(verdict, dict):
+        scan.coverage["model_texts_count"] = verdict.get("model_texts_count", 0)
+        scan.coverage["truncated_texts_count"] = verdict.get("truncated_texts_count", 0)
 
 
-def _classify(row: dict[str, Any]) -> Candidate | None:
-    verdict = row.get("verdict")
-    signals = row.get("signals") or []
-    posts = row.get("publications") or row.get("posts") or []
-    chat = row["chat"]
+def _classify(scan: ChannelScan) -> Candidate | None:
+    verdict = scan.verdict
+    signals = scan.signals
+    posts = scan.publications or scan.posts
+    chat = scan.chat
     if has_text(posts) and is_valid_verdict(verdict) and isinstance(verdict, dict):
         reasons = text_reasons(verdict)
         if reasons:

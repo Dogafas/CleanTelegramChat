@@ -8,7 +8,7 @@ from unittest import mock
 from pyrogram import enums
 from pyrogram.errors import FloodWait
 
-from review import _classify, scan
+from review import ChannelScan, _classify, scan
 from verdict import VerdictStatus
 
 _CLEAN = {
@@ -43,6 +43,19 @@ def _app(posts, *, members=1000, description="био"):
         get_chat=lambda cid: Chat(members_count=members, description=description),
         get_chat_history=lambda cid, limit: posts,
         get_messages=lambda cid, mid: None,
+    )
+
+
+def _scan(*, chat=None, verdict=None, posts=(), publications=(), signals=(), coverage=None):
+    return ChannelScan(
+        chat=chat or _channel(1, "Канал"),
+        description="",
+        posts=list(posts),
+        publications=list(publications),
+        coverage={} if coverage is None else coverage,
+        metrics={},
+        signals=list(signals),
+        verdict=verdict,
     )
 
 
@@ -95,9 +108,9 @@ class ReviewRoutingTests(unittest.TestCase):
 
     def test_gray_reasons_are_typed_not_string_parsing(self):
         # одна категория, разные программные статусы: без парсинга русских строк
-        no_text = _classify({"chat": _channel(1, "Пустой"), "verdict": None, "posts": []})
+        no_text = _classify(_scan(chat=_channel(1, "Пустой"), verdict=None))
         errored = _classify(
-            {"chat": _channel(2, "Сломанный"), "verdict": {"error": "x"}, "posts": [_post()]}
+            _scan(chat=_channel(2, "Сломанный"), verdict={"error": "x"}, posts=[_post()])
         )
         assert no_text is not None and errored is not None
         self.assertEqual((no_text.category, no_text.status), ("gray", VerdictStatus.NO_TEXT))
