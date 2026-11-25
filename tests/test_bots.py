@@ -21,9 +21,19 @@ from plan import (
     load_rollback_journal,
     rollback_session,
 )
+from review import Candidate
+
+
+def must(cand: Candidate | None) -> Candidate:
+    """Кандидат обязателен в этих сценариях — падение здесь, а не на None.attribute."""
+    assert cand is not None
+    return cand
 
 _NOW = datetime(2026, 11, 23, tzinfo=timezone.utc)
-NO_SLEEP = lambda _seconds: None  # noqa: E731
+
+
+def NO_SLEEP(_seconds: float) -> None:
+    pass
 
 
 def msg(
@@ -55,7 +65,8 @@ def bot_dialog(chat_id: int = 1) -> SimpleNamespace:
 
 
 def make_info(**kw: Any) -> BotInfo:
-    return BotInfo(dialog=bot_dialog(kw.pop("chat_id", 1)), archived=False, **kw)
+    chat_id = kw.pop("chat_id", 1)
+    return BotInfo(dialog=bot_dialog(chat_id), chat_id=chat_id, archived=False, **kw)
 
 
 def verdict(**noul: float) -> dict[str, Any]:
@@ -279,33 +290,33 @@ class SignalsTests(unittest.TestCase):
 
 class RoutingTests(unittest.TestCase):
     def test_deleted_is_red_checked(self):
-        cand = classify(make_info(deleted=True))
+        cand = must(classify(make_info(deleted=True)))
         self.assertEqual(cand.category, "red")
         self.assertTrue(cand.checked)
         self.assertIn("удалён / забанен", cand.reasons)
 
     def test_probe_silent_is_red(self):
-        cand = classify(make_info(probe="silent"))
+        cand = must(classify(make_info(probe="silent")))
         self.assertEqual(cand.category, "red")
         self.assertTrue(cand.checked)
 
     def test_history_error_is_gray(self):
-        cand = classify(make_info(error="ValueError: x"))
+        cand = must(classify(make_info(error="ValueError: x")))
         self.assertEqual(cand.category, "gray")
         self.assertFalse(cand.checked)
 
     def test_verdict_error_is_gray(self):
         info = make_info(messages=[msg(text="привет")], verdict={"error": "boom"})
-        self.assertEqual(classify(info).category, "gray")
+        self.assertEqual(must(classify(info)).category, "gray")
 
     def test_signals_are_yellow_unchecked(self):
         info = make_info(signals=["молчит ≥ 3 мес."])
-        cand = classify(info)
+        cand = must(classify(info))
         self.assertEqual(cand.category, "yellow")
         self.assertFalse(cand.checked)
 
     def test_no_texts_is_gray(self):
-        cand = classify(make_info(messages=[msg(text="  ")]))
+        cand = must(classify(make_info(messages=[msg(text="  ")])))
         self.assertEqual(cand.category, "gray")
 
     def test_healthy_bot_is_not_candidate(self):
@@ -320,14 +331,14 @@ class RoutingTests(unittest.TestCase):
 
     def test_verdict_ads_with_unused_is_red_checked(self):
         info = make_info(signals=["не использован"], verdict=verdict(ads=0.9))
-        cand = classify(info)
+        cand = must(classify(info))
         self.assertEqual(cand.category, "red")
         self.assertTrue(cand.checked)
         self.assertEqual(cand.reasons, ["рекламная витрина", "не использован"])
 
     def test_verdict_ads_without_unused_is_yellow(self):
         info = make_info(messages=[msg(text="текст")], verdict=verdict(ads=0.9))
-        cand = classify(info)
+        cand = must(classify(info))
         self.assertEqual(cand.category, "yellow")
         self.assertIn("рекламная витрина", cand.reasons)
 
@@ -335,7 +346,7 @@ class RoutingTests(unittest.TestCase):
         info = make_info(
             signals=["молчит ≥ 3 мес."], verdict=verdict(slop=0.9, repetition=0.8)
         )
-        cand = classify(info)
+        cand = must(classify(info))
         self.assertEqual(cand.category, "yellow")
         self.assertEqual(
             cand.reasons,
@@ -402,7 +413,7 @@ class ScenarioOrderTests(unittest.TestCase):
         )
         self.assertEqual(calls["probe"], 1)
         self.assertEqual(infos[0].probe, "silent")
-        self.assertEqual(classify(infos[0]).category, "red")
+        self.assertEqual(must(classify(infos[0])).category, "red")
 
 
 class ScanTests(unittest.TestCase):
@@ -441,6 +452,7 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(seen["name"], info.dialog.chat.first_name)
         self.assertEqual(seen["posts"], info.messages)
         self.assertEqual(seen["description"], "полезный бот")
+        assert info.verdict is not None
         self.assertTrue(info.verdict.get("voice"))
 
     def test_scan_deleted_bot_skips_history(self):
@@ -487,7 +499,7 @@ class ProbeTests(unittest.TestCase):
                 raise FloodWait(value=1)
             return original(chat_id, text)
 
-        app.send_message = flaky  # type: ignore[method-assign]
+        app.send_message = flaky
         result = probe_bot(app, 9, wait_s=6, poll_s=2, sleep=lambda _s: None)
         self.assertEqual(result, "silent")
         self.assertTrue(state["raised"])
@@ -513,7 +525,7 @@ class RollbackFilterTests(unittest.TestCase):
                 return SimpleNamespace(full_user=SimpleNamespace(blocked=blocked[req.id.user_id]))
             return None
 
-        app.invoke = fake_invoke  # type: ignore[method-assign]
+        app.invoke = fake_invoke
         with tempfile.TemporaryDirectory() as td:
             plan = ActionPlan()
             plan.set_mute(900, "Канал 900")

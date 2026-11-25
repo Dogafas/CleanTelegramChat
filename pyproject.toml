@@ -31,7 +31,7 @@ line-length = 100
 target-version = "py39"
 
 [tool.ruff.lint]
-allowed-confusables = ["с", "а", "е", "о", "р", "х", "у", "г", "б", "д", "в", "к", "м", "н", "п", "т", "ф", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "В", "С", "Н"]  # кириллица в русских строках/комментариях
+allowed-confusables = ["с", "а", "е", "о", "р", "х", "у", "г", "б", "д", "в", "к", "м", "н", "п", "т", "ф", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "А", "В", "Е", "К", "М", "Н", "О", "Р", "С", "Т", "У", "Х"]  # кириллица в русских строках/комментариях
 select = [
     "E", "F", "W",           # pycodestyle/pyflakes
     "I",                     # isort
@@ -42,16 +42,23 @@ select = [
     "PL",                    # pylint
     "C4", "RET", "ARG", "PTH", "T20",
     "S",                     # bandit: no hardcoded secrets, etc.
+    "TID",                   # tidy-imports: banned-api (cast/mock в коде запрещены)
 ]
 ignore = [
     "PLR0913",  # много keyword-defaults (sleep, rng, log) — так задумано DI
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.cast".msg = "cast запрещён: сужай тип проверкой isinstance/Protocol"
+"unittest.mock".msg = "моки запрещены в коде; фейки живут в tests/ через швы ui/client"
 
 [tool.ruff.lint.per-file-ignores]
 "test_*.py" = [
     "S101",     # assert в тестах — это тест
     "PLR2004",  # magic numbers в тестах — литералы по спецификации
     "ARG",      # fakes mirror purge keyword arguments
+    "TID251",   # в тестах фейки допустимы; unittest.mock и cast запрещены только в коде
     "T201",     # финальный print бегунка тестов
 ]
 "people.py" = ["T201"]  # print — публичный вывод CLI
+"session.py" = ["S105"]  # TELEGRAM_PROXY_PASSWORD — имя env-переменной, не литерал пароля

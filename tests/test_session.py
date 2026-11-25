@@ -171,6 +171,7 @@ class ResolveProxySourceTests(unittest.TestCase):
                 "password": "pass",
             },
         )
+        assert res3 is not None
         self.assertIsInstance(res3["port"], int)
 
     def test_schemes_normalized_to_lowercase(self):
@@ -605,6 +606,7 @@ class TelegramClientTests(unittest.TestCase):
 
     def test_restore_client_loop(self):
         old_loop = asyncio.get_event_loop()
+        client_loop: asyncio.AbstractEventLoop | None = None
         try:
             client_loop = asyncio.new_event_loop()
             app = type("FakeApp", (), {"loop": client_loop})()
@@ -623,7 +625,8 @@ class TelegramClientTests(unittest.TestCase):
             self.assertFalse(asyncio.get_event_loop().is_closed())
         finally:
             asyncio.set_event_loop(old_loop)
-            client_loop.close()
+            if client_loop is not None:
+                client_loop.close()
 
 
 if __name__ == "__main__":

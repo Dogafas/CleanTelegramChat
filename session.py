@@ -1,16 +1,28 @@
 import asyncio
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from pyrogram import Client
 
 from ui import ask_confirm as _ask_confirm
 from ui import ask_select as _ask_select
 from ui import ask_text as _ask_text
+
+_T = TypeVar("_T")
+
+
+def sync_list(agen: AsyncGenerator[_T, None]) -> list[_T]:
+    """list() для kurigram-итераторов (get_dialogs, get_chat_history).
+
+    Аннотации kurigram врут: в рантайме его методы sync — pyrogram/sync.py
+    оборачивает их при сборке класса, и get_dialogs() возвращает обычный
+    генератор. Статический тип оставлен как объявлен в kurigram.
+    """
+    return list(agen)  # pyright: ignore[reportArgumentType] — единственное подавление, см. докстринг
 
 ENV_ID = "TELEGRAM_API_ID"
 ENV_HASH = "TELEGRAM_API_HASH"
@@ -24,7 +36,7 @@ PROXY_SCHEME = "TELEGRAM_PROXY_SCHEME"
 PROXY_HOSTNAME = "TELEGRAM_PROXY_HOSTNAME"
 PROXY_PORT = "TELEGRAM_PROXY_PORT"
 PROXY_USERNAME = "TELEGRAM_PROXY_USERNAME"
-PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"  # noqa: S105
+PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"
 PROXY_KEYS = (PROXY_SCHEME, PROXY_HOSTNAME, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD)
 PROXY_SCHEMES = ("socks5", "socks4", "http")
 # Jev/TypeSafe (verdict.py): ключ и опциональные endpoint/model — переживают rewrite .env
@@ -128,7 +140,7 @@ def prompt_sessions(
             name = _prompt_new_session(ask_text, existing)
             return [name] if name else []
 
-        choices: list[Any] = []
+        choices: list[tuple[str, str]] = []
         if allow_all and len(existing) > 1:
             choices.append(("Все сессии", ALL_SESSIONS))
         for s in existing:
@@ -189,7 +201,7 @@ def resolve_credentials(
     path: Path | str | None = None,
     *,
     environ: Mapping[str, str] = os.environ,
-    input_fn: Any = input,
+    input_fn: Callable[[str], str] = input,
 ) -> tuple[int, str]:
     if ENV_ID in environ and ENV_HASH in environ:
         return int(environ[ENV_ID]), str(environ[ENV_HASH])
@@ -280,7 +292,7 @@ def resolve_proxy(
     return proxy
 
 
-def restore_client_loop(app: Any) -> None:
+def restore_client_loop(app: Client) -> None:
     """prompt_toolkit (questionary) подменяет thread loop через asyncio.run().
 
     Синхронные вызовы Pyrogram и client.stop() требуют loop клиента —
@@ -296,10 +308,10 @@ def telegram_client(
     session_name: str,
     *,
     workdir: Path | str | None = None,
-    client_factory: Any = Client,
+    client_factory: Callable[..., Any] = Client,
     environ: Mapping[str, str] = os.environ,
     env_file: Path | str | None = None,
-):
+) -> Iterator[Any]:
     api_id, api_hash = resolve_credentials(env_file, environ=environ)
     proxy = resolve_proxy(env_file, environ=environ)
     # Python 3.12+ / questionary: prompt_toolkit's asyncio.run() clears the thread

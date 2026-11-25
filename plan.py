@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from pyrogram import raw
+
 from chat_folder import add_peer, remove_peer
 from purge import retry_on_flood
 from subs import leave_chat
@@ -166,7 +168,6 @@ def save_rollback_journal(
     Повторный apply без отката не должен лишать отката прежние изменения.
     Журнал без секретов, токенов и текстов.
     """
-    # ponytail: локальный json в sessions/, исключённый из git
     path = _journal_path(session_name, root_dir)
     merged = load_rollback_journal(session_name, root_dir=root_dir) + list(records)
     return _write_journal(path, session_name, merged)
@@ -189,8 +190,6 @@ def _apply_mute(
     app: Any,
     chat_id: int,
 ) -> tuple[str, dict[str, Any] | None]:
-    from pyrogram import raw  # noqa: PLC0415
-
     peer = app.resolve_peer(chat_id)
     settings = app.invoke(
         raw.functions.account.GetNotifySettings(
@@ -353,8 +352,6 @@ class BotAction:
 
 def _bot_blocked(app: Any, chat_id: int) -> bool:
     """Текущее состояние блокировки бота (state-guard отката)."""
-    from pyrogram import raw  # noqa: PLC0415
-
     peer = app.resolve_peer(chat_id)
     full = app.invoke(
         raw.functions.users.GetFullUser(
@@ -451,8 +448,6 @@ def apply_bot_actions(
 
 
 def _rollback_mute(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
-    from pyrogram import raw  # noqa: PLC0415
-
     chat_id = rec.get("chat_id")
     try:
         peer = app.resolve_peer(chat_id)
@@ -507,9 +502,14 @@ def _rollback_archive(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
 
 def _rollback_folder(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
     chat_id = rec.get("chat_id")
+    target_folder_id = rec.get("folder_id")
+    if not isinstance(chat_id, int) or not isinstance(target_folder_id, int):
+        return {
+            "chat_id": chat_id, "action": "folder", "status": "error",
+            "detail": "битая запись журнала: нет chat_id или folder_id",
+        }
     try:
-        target_folder_id = rec.get("folder_id")
-        status = remove_peer(app, chat_id, int(target_folder_id))
+        status = remove_peer(app, chat_id, target_folder_id)
         if status == "skipped":
             return {
                 "chat_id": chat_id, "action": "folder", "status": "skipped",
@@ -525,6 +525,11 @@ def _rollback_folder(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
 
 def _rollback_stop(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
     chat_id = rec.get("chat_id")
+    if not isinstance(chat_id, int):
+        return {
+            "chat_id": chat_id, "action": "stop", "status": "error",
+            "detail": "битая запись журнала: нет chat_id",
+        }
     try:
         # State-guard: пользователь сам разблокировал бота — не блокируем повторно
         if not _bot_blocked(app, chat_id):
@@ -559,7 +564,7 @@ _ROLLBACK_HANDLERS = {
 
 def _rollback_record(app: Any, rec: dict[str, Any]) -> dict[str, Any]:
     """Откат одной записи журнала: restored | skipped | error."""
-    handler = _ROLLBACK_HANDLERS.get(rec.get("action"))
+    handler = _ROLLBACK_HANDLERS.get(str(rec.get("action")))
     if handler is None:
         return {
             "chat_id": rec.get("chat_id"), "action": str(rec.get("action")),

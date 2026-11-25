@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
+from pyrogram import raw
 from pyrogram.errors import RPCError
 
 FALLBACK_FOLDERS = 10
@@ -30,7 +32,7 @@ _COPY_FIELDS = (
 )
 
 
-def filter_title(folder: Any) -> str:
+def filter_title(folder: object) -> str:
     title = getattr(folder, "title", None)
     if isinstance(title, str):
         return title.strip()
@@ -40,7 +42,9 @@ def filter_title(folder: Any) -> str:
     return ""
 
 
-def snapshot(app: Any, log: Any = logging.info) -> tuple[frozenset[str], int, int, int, bool]:
+def snapshot(
+    app: Any, log: Callable[[str], None] = logging.info
+) -> tuple[frozenset[str], int, int, int, bool]:
     """(titles, folder_limit, chat_limit, used, ok). ok is false if filters cannot be read."""
     filters = _read_filters(app, log)
     if filters is None:
@@ -56,7 +60,7 @@ def create_only(
     chat_ids: list[int],
     *,
     used_ids: set[int] | None = None,
-    log: Any = logging.info,
+    log: Callable[[str], None] = logging.info,
 ) -> tuple[str, list[tuple[int, str]], int]:
     """Create a missing folder. Never updates an existing title.
 
@@ -83,8 +87,6 @@ def create_only(
             unresolved.append((chat_id, str(e)))
     if not peers:
         return "empty", unresolved, 0
-
-    from pyrogram import raw  # noqa: PLC0415
 
     dialog_filter = raw.types.DialogFilter(
         id=folder_id,
@@ -118,8 +120,6 @@ def add_peer(app: Any, chat_id: int, title: str) -> tuple[str, int | None, bool]
     except Exception:
         return "error", None, False
     peer_id = _peer_id(peer)
-
-    from pyrogram import raw  # noqa: PLC0415
 
     if target is not None:
         include = list(getattr(target, "include_peers", []))
@@ -163,8 +163,6 @@ def remove_peer(app: Any, chat_id: int, folder_id: int) -> str:
     include = [item for item in getattr(target, "include_peers", []) if _peer_id(item) != peer_id]
     updated = _copied(target, include_peers=include)
 
-    from pyrogram import raw  # noqa: PLC0415
-
     app.invoke(
         raw.functions.messages.UpdateDialogFilter(id=target.id, filter=updated),
         sleep_threshold=60,
@@ -172,10 +170,10 @@ def remove_peer(app: Any, chat_id: int, folder_id: int) -> str:
     return "restored"
 
 
-def _read_filters(app: Any, log: Any = logging.info) -> list[Any] | None:
+def _read_filters(
+    app: Any, log: Callable[[str], None] = logging.info
+) -> list[raw.types.DialogFilter] | None:
     try:
-        from pyrogram import raw  # noqa: PLC0415
-
         res = app.invoke(raw.functions.messages.GetDialogFilters())
         if hasattr(res, "filters") and isinstance(res.filters, list):
             return res.filters
@@ -191,10 +189,10 @@ def _read_filters(app: Any, log: Any = logging.info) -> list[Any] | None:
         return None
 
 
-def _limits(app: Any, log: Any = logging.info) -> tuple[int, int]:
+def _limits(
+    app: Any, log: Callable[[str], None] = logging.info
+) -> tuple[int, int]:
     try:
-        from pyrogram import raw  # noqa: PLC0415
-
         me = app.get_me()
         config = app.invoke(raw.functions.help.GetAppConfig(hash=0))
         if not isinstance(config, raw.types.JsonObject):
@@ -204,8 +202,7 @@ def _limits(app: Any, log: Any = logging.info) -> tuple[int, int]:
         cfg = {
             item.key: int(item.value.value)
             for item in config.value
-            if getattr(item, "key", None)
-            and isinstance(getattr(item, "value", None), raw.types.JsonNumber)
+            if item.key and isinstance(item.value, raw.types.JsonNumber)
         }
         chat_key = (
             "dialog_filters_chats_limit_premium"
@@ -224,7 +221,7 @@ def _limits(app: Any, log: Any = logging.info) -> tuple[int, int]:
         return FALLBACK_FOLDERS, FALLBACK_CHATS
 
 
-def _peer_id(peer: Any) -> int | None:
+def _peer_id(peer: object) -> int | None:
     for attr in ("channel_id", "chat_id", "user_id"):
         val = getattr(peer, attr, None)
         if val is not None:
@@ -232,9 +229,9 @@ def _peer_id(peer: Any) -> int | None:
     return None
 
 
-def _copied(source: Any, *, include_peers: list[Any]) -> Any:
-    from pyrogram import raw  # noqa: PLC0415
-
+def _copied(
+    source: raw.types.DialogFilter, *, include_peers: list[object]
+) -> raw.types.DialogFilter:
     kwargs = {
         "id": source.id,
         "title": source.title,

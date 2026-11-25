@@ -1,7 +1,8 @@
 """Архитектурный гейт слоёв: CLI-сценарии сверху, ядро снизу.
 
 Правила: ядро не импортирует CLI-сценарии; сценарии не импортируют
-друг друга (каждый — самостоятельный запуск).
+друг друга (каждый — самостоятельный запуск); циклы импортов запрещены;
+`noqa`/`type: ignore` в коде запрещены (подавления — только в pyproject).
 
 import-linter и pytest-archon требуют пакетную раскладку (каталоги с
 __init__.py), репо плоский — поэтому ast без зависимостей.
@@ -59,6 +60,39 @@ class LayerTests(unittest.TestCase):
                 continue
             others = _imported_roots(path) & (CLI - {path.stem})
             self.assertEqual(others, set(), f"{path.name} импортирует сценарий {sorted(others)}")
+
+    def test_sources_have_no_linter_ignores(self):
+        offenders = []
+        for path in sorted(ROOT.glob("*.py")):
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if "noqa" in line or "type: ignore" in line:
+                    offenders.append(f"{path.name}:{lineno}")
+        self.assertEqual(
+            offenders,
+            [],
+            "правь код, а не глуши линтер; подавления — только в pyproject с обоснованием",
+        )
+
+    def test_no_circular_imports(self):
+        stems = {p.stem for p in ROOT.glob("*.py")}
+        graph = {p.stem: _imported_roots(p) & stems for p in ROOT.glob("*.py")}
+        state: dict[str, int] = {}
+
+        def visit(node: str, stack: list[str]) -> None:
+            if state.get(node) == 1:
+                cycle = [*stack[stack.index(node):], node]
+                self.fail(f"цикл импортов: {' -> '.join(cycle)}")
+            if state.get(node) == 2:
+                return
+            state[node] = 1
+            for dep in graph[node]:
+                visit(dep, [*stack, node])
+            state[node] = 2
+
+        for node in sorted(graph):
+            visit(node, [])
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ from collections.abc import Callable
 from time import sleep
 from typing import Any
 
+from pyrogram.types import Chat
+
 from catalog import prompt_selection
 from purge import purge_chats
 from session import prompt_sessions, restore_client_loop, telegram_client
@@ -12,7 +14,7 @@ def purge_all_sessions(
     sessions: list[str],
     *,
     client: Callable[..., Any] = telegram_client,
-    select: Callable[..., list[Any]] = prompt_selection,
+    select: Callable[..., list[Chat]] = prompt_selection,
     purge: Callable[..., None] = purge_chats,
     log: Callable[[str], None] = logging.info,
 ) -> None:

@@ -2,11 +2,16 @@
 
 import math
 import os
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from typesafe_sdk import Choice, Noul
+from pyrogram.types import Message
+from typesafe_sdk import Choice, Noul, TypeSafeClient
+
+from session import TYPESAFE_KEYS, _parse_env
+from subs import Publication
 
 
 def load_typesafe_env(env_file: Path | None = None) -> None:
@@ -17,7 +22,6 @@ def load_typesafe_env(env_file: Path | None = None) -> None:
     path = env_file or Path(__file__).resolve().parent / ".env"
     if not path.is_file():
         return
-    from session import TYPESAFE_KEYS, _parse_env  # noqa: PLC0415
 
     for key, value in _parse_env(path.read_text(encoding="utf-8")).items():
         if key in TYPESAFE_KEYS:
@@ -80,7 +84,7 @@ class VerdictStatus(str, Enum):
     VALID = "valid"
 
 
-def status_of(verdict: Any) -> VerdictStatus:
+def status_of(verdict: dict[str, Any] | None) -> VerdictStatus:
     """Типизированное состояние значения вердикта: нет текста / ошибка / валиден."""
     if verdict is None:
         return VerdictStatus.NO_TEXT
@@ -89,12 +93,12 @@ def status_of(verdict: Any) -> VerdictStatus:
     return VerdictStatus.VALID
 
 
-def has_text(posts: list[Any]) -> bool:
+def has_text(posts: Sequence[Message | Publication]) -> bool:
     """Истина, если хотя бы один пост содержит непустой текст/подпись."""
     return any(bool(_post_text(p).strip()) for p in posts)
 
 
-def is_valid_verdict(verdict: Any) -> bool:
+def is_valid_verdict(verdict: dict[str, Any] | None) -> bool:
     """Проверка валидности вердикта (все поля на месте, числа конечны и в диапазоне [0, 1])."""
     if not isinstance(verdict, dict) or "error" in verdict:
         return False
@@ -130,7 +134,7 @@ def text_reasons(verdict: dict[str, Any] | None) -> list[str]:
     return reasons
 
 
-def _post_text(message: Any) -> str:
+def _post_text(message: Message | Publication) -> str:
     # Str у Pyrogram срезает строки по utf-16 суррогатам и ломается на
     # битых текстах — режем plain str.
     raw = getattr(message, "text", None) or getattr(message, "caption", None) or ""
@@ -138,14 +142,13 @@ def _post_text(message: Any) -> str:
 
 
 def prepare_model_texts(
-    publications: list[Any],
+    publications: Sequence[Message | Publication],
     max_texts: int = 30,
     max_chars: int = 1000,
-) -> tuple[list[tuple[Any, str]], int]:
+) -> tuple[list[tuple[int, str]], int]:
     """Детерминированный равномерный отбор текстов для модели (Section 1 & 4)."""
-    # ponytail: равномерная сетка индексов по времени без предпочтения реакций/просмотров
     candidates = [
-        (getattr(p, "id", idx), str(getattr(p, "text", None) or getattr(p, "caption", None) or ""))
+        (p.id, str(getattr(p, "text", None) or getattr(p, "caption", None) or ""))
         for idx, p in enumerate(publications)
     ]
     candidates = [(pid, text) for pid, text in candidates if text.strip()]
@@ -174,11 +177,11 @@ def prepare_model_texts(
 
 def evaluate(
     title: str,
-    posts: list[Any],
+    posts: Sequence[Message | Publication],
     *,
     description: str = "",
-    client_factory: Any = None,
-    call: Any = None,
+    client_factory: Callable[..., Any] | None = None,
+    call: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Вердикт Jev по текстам подписки: Choice голоса + 5 Noul текстового провала."""
     prepared, truncated_count = prepare_model_texts(posts, max_texts=30, max_chars=1000)
@@ -193,8 +196,6 @@ def evaluate(
         }
         if call is None:
             if client_factory is None:
-                from typesafe_sdk import TypeSafeClient  # noqa: PLC0415
-
                 load_typesafe_env()
                 client_factory = TypeSafeClient
             with client_factory() as client:
@@ -217,7 +218,8 @@ def evaluate(
         for k in ("slop", "clickbait", "ads", "emotional_pressure", "repetition"):
             ans = answers[k]
             val = getattr(ans, "noul", ans)
-            verdict[k] = float(val)
+            # нечисловой ответ модели — полный провал (fail-closed, ADR 0009)
+            verdict[k] = float(val) if isinstance(val, (int, float)) else 1.0
         if not is_valid_verdict(verdict):
             return {"error": "Некорректный или выходящий за границы ответ модели"}
         return verdict

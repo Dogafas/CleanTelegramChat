@@ -3,5 +3,6 @@ status=0
 uv run ruff check || status=1
 uv run vulture . || status=1
 uv run deptry . || status=1
+uv run basedpyright || status=1
 uv run python -m unittest discover tests || status=1
 exit "$status"

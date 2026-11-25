@@ -9,11 +9,13 @@ from datetime import datetime, timedelta, timezone
 from time import sleep as default_sleep
 from typing import Any, Callable
 
-from pyrogram import enums
+from pyrogram import Client, enums
+from pyrogram.types import Chat, Dialog, Message
 
 from dialogs import list_dialogs
 from purge import retry_on_flood
 from review import Candidate
+from session import sync_list
 from subs import AD_MARKERS, ANALYSIS_PAUSE
 from verdict import REASON_RU, evaluate, has_text, is_valid_verdict, text_reasons
 
@@ -29,7 +31,8 @@ AD_ENTITY_TYPES = (enums.MessageEntityType.URL, enums.MessageEntityType.TEXT_LIN
 class BotInfo:
     """Скан бот-диалога: профиль, полная история, сигналы, вердикт."""
 
-    dialog: Any
+    dialog: Dialog
+    chat_id: int
     archived: bool
     bio: str = ""
     deleted: bool = False
@@ -37,34 +40,34 @@ class BotInfo:
     probe: str | None = None  # None | "replied" | "silent" | "error"
     signals: list[str] = field(default_factory=list)
     verdict: dict[str, Any] | None = None
-    messages: list[Any] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)
     error: str | None = None
 
 
-def _display_name(chat: Any) -> str:
+def _display_name(chat: Chat) -> str:
     name = " ".join(
         p for p in (getattr(chat, "first_name", None), getattr(chat, "last_name", None)) if p
     )
     return name or getattr(chat, "username", None) or str(getattr(chat, "id", "?"))
 
 
-def bot_label(chat: Any) -> str:
+def bot_label(chat: Chat) -> str:
     """Имя бот-диалога: у User нет .title, берём имя/username."""
     username = getattr(chat, "username", None)
     name = _display_name(chat)
     return f"{name} (@{username}) — {chat.id}" if username else f"{name} — {chat.id}"
 
 
-def bot_name(chat: Any) -> str:
+def bot_name(chat: Chat) -> str:
     """Короткое имя для Jev (channel в state)."""
     return _display_name(chat)
 
 
-def _to_utc(val: Any) -> datetime:
+def _to_utc(val: datetime) -> datetime:
     return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
 
 
-def _is_ad(m: Any) -> bool:
+def _is_ad(m: Message) -> bool:
     text = str(getattr(m, "text", None) or getattr(m, "caption", None) or "")
     if AD_MARKERS.search(text):
         return True
@@ -73,7 +76,7 @@ def _is_ad(m: Any) -> bool:
     return any(getattr(e, "type", None) in AD_ENTITY_TYPES for e in entities)
 
 
-def ad_share(messages: list[Any]) -> float:
+def ad_share(messages: list[Message]) -> float:
     """Доля входящих сообщений бота с рекламными маркерами или URL-entities."""
     incoming = [
         m
@@ -85,7 +88,7 @@ def ad_share(messages: list[Any]) -> float:
     return sum(1 for m in incoming if _is_ad(m)) / len(incoming)
 
 
-def bot_signals(messages: list[Any], *, now: datetime | None = None) -> list[str]:
+def bot_signals(messages: list[Message], *, now: datetime | None = None) -> list[str]:
     """Фиксированные сигналы ADR 0011 §3 по полной истории (новейшие первыми)."""
     now = now or datetime.now(timezone.utc)
     signals: list[str] = []
@@ -113,14 +116,28 @@ def bot_signals(messages: list[Any], *, now: datetime | None = None) -> list[str
     return signals
 
 
-def _is_deleted(app: Any, chat_id: int, *, sleep: Any, rng: Any, log: Any) -> bool:
+def _is_deleted(
+    app: Client,
+    chat_id: int,
+    *,
+    sleep: Callable[[float], None],
+    rng: Callable[..., float],
+    log: Callable[[str], None],
+) -> bool:
     val, error = retry_on_flood(
         lambda: app.get_users(chat_id), sleep=sleep, rng=rng, log=log, what=", бот"
     )
     return error is not None or bool(getattr(val, "is_deleted", False))
 
 
-def _get_bio(app: Any, chat_id: int, *, sleep: Any, rng: Any, log: Any) -> str:
+def _get_bio(
+    app: Client,
+    chat_id: int,
+    *,
+    sleep: Callable[[float], None],
+    rng: Callable[..., float],
+    log: Callable[[str], None],
+) -> str:
     val, _ = retry_on_flood(
         lambda: app.get_chat(chat_id), sleep=sleep, rng=rng, log=log, what=", бот"
     )
@@ -128,11 +145,17 @@ def _get_bio(app: Any, chat_id: int, *, sleep: Any, rng: Any, log: Any) -> str:
 
 
 def _fetch_history(
-    app: Any, chat_id: int, *, sleep: Any, rng: Any, log: Any
-) -> tuple[list[Any], str | None]:
+    app: Client,
+    chat_id: int,
+    *,
+    sleep: Callable[[float], None],
+    rng: Callable[..., float],
+    log: Callable[[str], None],
+) -> tuple[list[Message], str | None]:
     # ADR 0011: полная история без лимита — бот-диалоги короткие
     val, error = retry_on_flood(
-        lambda: list(app.get_chat_history(chat_id)), sleep=sleep, rng=rng, log=log, what=", бот"
+        lambda: sync_list(app.get_chat_history(chat_id)),
+        sleep=sleep, rng=rng, log=log, what=", бот"
     )
     if error is not None:
         return [], f"{type(error).__name__}: {error}"
@@ -140,7 +163,7 @@ def _fetch_history(
 
 
 def scan_bots(
-    app: Any,
+    app: Client,
     log: Callable[[str], None] = print,
     *,
     sleep: Callable[[float], None] = default_sleep,
@@ -162,15 +185,19 @@ def scan_bots(
         if i:
             sleep(rng(*ANALYSIS_PAUSE))
         chat = dialog.chat
-        info = BotInfo(dialog=dialog, archived=archived)
+        chat_id = chat.id
+        if chat_id is None:
+            log(f"{bot_label(chat)}: диалог без id — пропускаю")
+            continue
+        info = BotInfo(dialog=dialog, chat_id=chat_id, archived=archived)
         label = bot_label(chat)
-        if _is_deleted(app, chat.id, sleep=sleep, rng=rng, log=log):
+        if _is_deleted(app, chat_id, sleep=sleep, rng=rng, log=log):
             info.deleted = True
             log(f"{label}: удалён или заблокирован — кандидат RED")
             infos.append(info)
             continue
-        info.bio = _get_bio(app, chat.id, sleep=sleep, rng=rng, log=log)
-        info.messages, info.error = _fetch_history(app, chat.id, sleep=sleep, rng=rng, log=log)
+        info.bio = _get_bio(app, chat_id, sleep=sleep, rng=rng, log=log)
+        info.messages, info.error = _fetch_history(app, chat_id, sleep=sleep, rng=rng, log=log)
         if info.error is None:
             info.outgoing = sum(1 for m in info.messages if getattr(m, "outgoing", False))
             info.signals = bot_signals(info.messages)
@@ -183,7 +210,7 @@ def scan_bots(
     return infos
 
 
-def _classify_by_texts(info: BotInfo, chat: Any) -> Candidate | None:
+def _classify_by_texts(info: BotInfo, chat: Chat) -> Candidate | None:
     """Маршрутизация по сигналам и Jev-вердикту (ADR 0011 §5-6)."""
     if info.verdict is not None and not is_valid_verdict(info.verdict):
         return Candidate("gray", ["вердикт не удался"], None, False, chat)
@@ -239,7 +266,7 @@ def _attach_verdict(
 
 
 def probe_bot(
-    app: Any,
+    app: Client,
     chat_id: int,
     *,
     wait_s: int = 30,
@@ -260,7 +287,7 @@ def probe_bot(
         sleep(poll_s)
         waited += poll_s
         hist, hist_error = retry_on_flood(
-            lambda: list(app.get_chat_history(chat_id, limit=1)),
+            lambda: sync_list(app.get_chat_history(chat_id, limit=1)),
             sleep=sleep, rng=rng, log=log, what=", бот",
         )
         if hist_error is None and hist:
@@ -271,6 +298,6 @@ def probe_bot(
     return "silent"
 
 
-def _is_bot(row: Any) -> bool:
+def _is_bot(row: Dialog) -> bool:
     chat = getattr(row, "chat", None)
     return chat is not None and getattr(chat, "type", None) == enums.ChatType.BOT

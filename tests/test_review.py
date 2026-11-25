@@ -99,6 +99,7 @@ class ReviewRoutingTests(unittest.TestCase):
         errored = _classify(
             {"chat": _channel(2, "Сломанный"), "verdict": {"error": "x"}, "posts": [_post()]}
         )
+        assert no_text is not None and errored is not None
         self.assertEqual((no_text.category, no_text.status), ("gray", VerdictStatus.NO_TEXT))
         self.assertEqual((errored.category, errored.status), ("gray", VerdictStatus.ERROR))
 

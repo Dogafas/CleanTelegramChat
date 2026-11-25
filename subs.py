@@ -3,10 +3,14 @@
 import random
 import re
 import statistics
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any
+
+from pyrogram.types import Chat, Message
 
 from purge import retry_on_flood
+from session import sync_list
 
 POSTS_WINDOW = 30
 ANALYSIS_PAUSE = (1.0, 3.0)
@@ -35,11 +39,13 @@ AD_MARKERS = re.compile(
 
 
 
-def fetch_posts(app: Any, chat_id: int, limit: int = POSTS_WINDOW) -> list[Any]:
-    return list(app.get_chat_history(chat_id, limit=limit))
+def fetch_posts(
+    app: Any, chat_id: int, limit: int = POSTS_WINDOW
+) -> list[Message]:
+    return sync_list(app.get_chat_history(chat_id, limit=limit))
 
 
-def fetch_creation_date(app: Any, chat_id: int) -> Any:
+def fetch_creation_date(app: Any, chat_id: int) -> datetime | None:
     """Дата создания канала: первое сообщение (id=1)."""
     try:
         msg = app.get_messages(chat_id, 1)
@@ -50,7 +56,7 @@ def fetch_creation_date(app: Any, chat_id: int) -> Any:
     return None
 
 
-def _to_utc_dt(val: Any) -> datetime | None:
+def _to_utc_dt(val: datetime | None) -> datetime | None:
     if isinstance(val, datetime):
         return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
     return None
@@ -62,7 +68,7 @@ class Publication:
     def __init__(
         self,
         id: int,
-        date: Any,
+        date: datetime | None,
         text: str = "",
         *,
         views: int | None = None,
@@ -82,12 +88,12 @@ class Publication:
         self.urls = urls or []
 
 
-def _extract_text(m: Any) -> str:
+def _extract_text(m: Message) -> str:
     raw = getattr(m, "text", None) or getattr(m, "caption", None) or ""
     return str(raw)
 
 
-def _extract_forward_info(m: Any) -> tuple[int | None, int | None]:
+def _extract_forward_info(m: Message) -> tuple[int | None, int | None]:
     """(origin_chat_id, origin_message_id) из forward_origin."""
     origin = getattr(m, "forward_origin", None)
     if origin is None:
@@ -101,9 +107,10 @@ def _extract_forward_info(m: Any) -> tuple[int | None, int | None]:
     return fwd_chat_id, getattr(origin, "message_id", None)
 
 
-def group_media_publications(messages: list[Any]) -> list[Publication]:
+def group_media_publications(
+    messages: Sequence[Message | Publication],
+) -> list[Publication]:
     """Объединение сообщений медиагрупп в единые публикации (Section 1)."""
-    # ponytail: группируем сообщения с одинаковым media_group_id в одну публикацию
     if not messages:
         return []
 
@@ -157,7 +164,7 @@ def group_media_publications(messages: list[Any]) -> list[Publication]:
 
 
 def compute_coverage(
-    messages: list[Any],
+    messages: list[Message],
     publications: list[Publication] | None = None,
     *,
     scan_started_at: datetime | None = None,
@@ -245,18 +252,18 @@ def format_coverage_short(cov: dict[str, Any]) -> str:
 
 
 def compute_metrics(
-    _chat: Any,
-    posts: list[Any],
+    _chat: Chat,
+    posts: Sequence[Message | Publication],
     members: int,
     *,
-    created_at: Any = None,
+    created_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Quality Metrics из дампа постов (ADR 0007)."""
     pubs = group_media_publications(posts)
     texts = [(getattr(m, "text", None) or getattr(m, "caption", None) or "") for m in pubs]
     raw_views = [getattr(m, "views", None) for m in pubs]
     valid_views = [float(v) for v in raw_views if v is not None and float(v) > 0]
-    dates = [m.date for m in pubs if getattr(m, "date", None)]
+    dates = [d for m in pubs if (d := m.date) is not None]
 
     # ponytail: отсутствие данных/знаменателя не симулирует низкий отклик
     err: float | None = None
@@ -282,7 +289,7 @@ def compute_metrics(
     growth_per_month: float | None = None
     c_dt = _to_utc_dt(created_at)
     if c_dt:
-        valid_dates = [_to_utc_dt(m.date) for m in pubs if getattr(m, "date", None)]
+        valid_dates = [d for m in pubs if (d := _to_utc_dt(m.date)) is not None]
         ref_dt = max((d for d in valid_dates if d), default=None) or datetime.now(timezone.utc)
         diff_sec = max((ref_dt - c_dt).total_seconds(), 0.0)
         age_days = round(diff_sec / 86400.0, 1)
@@ -354,7 +361,14 @@ def metric_signals(m: dict[str, Any]) -> list[str]:
     return signals
 
 
-def leave_chat(app: Any, chat_id: int, *, sleep, rng=random.uniform, log=print) -> bool:
+def leave_chat(
+    app: Any,
+    chat_id: int,
+    *,
+    sleep: Callable[[float], None],
+    rng: Callable[..., float] = random.uniform,
+    log: Callable[[str], None] = print,
+) -> bool:
     _val, error = retry_on_flood(
         lambda: app.leave_chat(chat_id),
         sleep=sleep,
@@ -369,8 +383,8 @@ def leave_chat(app: Any, chat_id: int, *, sleep, rng=random.uniform, log=print) 
 
 
 def _process_history_batch(
-    batch: list[Any],
-    by_id: dict[int, Any],
+    batch: list[Message],
+    by_id: dict[int, Message],
     newest_id: int | None,
     horizon_dt: datetime,
     limit: int,
@@ -392,22 +406,22 @@ def _process_history_batch(
 def refine_channel_history(
     app: Any,
     chat_id: int,
-    existing_messages: list[Any],
+    existing_messages: list[Message],
     *,
     horizon_days: int = 14,
     limit: int = 200,
     scan_started_at: datetime | None = None,
     batch_size: int = 100,
-    sleep: Any = None,
-    rng: Any = random.uniform,
+    sleep: Callable[[float], None] | None = None,
+    rng: Callable[..., float] = random.uniform,
     log: Callable[[str], None] = print,
-) -> tuple[list[Any], list[Publication], dict[str, Any]]:
+) -> tuple[list[Message], list[Publication], dict[str, Any]]:
     """Уточняющий сбор расширенной истории по выбранному каналу (Section 4)."""
     # ponytail: добираем сообщения вглубь истории без сдвига снимка новыми постами
     scan_dt = _to_utc_dt(scan_started_at) or datetime.now(timezone.utc)
     horizon_dt = scan_dt - timedelta(days=horizon_days)
 
-    by_id: dict[int, Any] = {
+    by_id: dict[int, Message] = {
         m.id: m
         for m in existing_messages
         if getattr(m, "id", None) is not None

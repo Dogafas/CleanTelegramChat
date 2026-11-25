@@ -4,6 +4,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from pyrogram import Client
+
 from bots import BotInfo, bot_label, classify, probe_bot, scan_bots
 from plan import BotAction, apply_bot_actions, rollback_session
 from review import Candidate
@@ -32,7 +34,7 @@ def _bot_row(info: BotInfo, candidate: Candidate | None) -> tuple[StyledTitle, i
         checked = candidate.checked
         tokens.append((style, f"{label} "))
     tokens.append(("", " | ".join(parts)))
-    return (StyledTitle(tokens), info.dialog.chat.id, checked)
+    return (StyledTitle(tokens), info.chat_id, checked)
 
 
 def _ordered(infos: list[BotInfo]) -> list[tuple[BotInfo, Candidate | None]]:
@@ -59,20 +61,20 @@ def _build_actions(
     actions: list[BotAction] = []
     for info in infos:
         chat = info.dialog.chat
-        stop = chat.id in stop_ids
-        delete = chat.id in delete_ids
+        stop = info.chat_id in stop_ids
+        delete = info.chat_id in delete_ids
         if stop or delete:
             actions.append(
-                BotAction(chat_id=chat.id, title=bot_label(chat), stop=stop, delete=delete)
+                BotAction(chat_id=info.chat_id, title=bot_label(chat), stop=stop, delete=delete)
             )
     return actions
 
 
 def _probe_menu(
-    app: Any,
+    app: Client,
     infos: list[BotInfo],
     *,
-    restore: Callable[[Any], None],
+    restore: Callable[[Client], None],
     ask: Callable[..., Any],
     confirm: Callable[[str], Any],
     probe_fn: Callable[..., str],
@@ -85,7 +87,7 @@ def _probe_menu(
         return
     rows = [(info, classify(info)) for info in infos]
     choices = [
-        (_bot_row(info, candidate)[0], info.dialog.chat.id, False)
+        (_bot_row(info, candidate)[0], info.chat_id, False)
         for info, candidate in rows
     ]
     selected = set(ask(choices, message="Отметьте ботов для пробы /start") or [])
@@ -94,10 +96,10 @@ def _probe_menu(
     restore(app)
     for info in infos:
         chat = info.dialog.chat
-        if chat.id not in selected:
+        if info.chat_id not in selected:
             continue
         log(f"Проба /start: {bot_label(chat)}…")
-        info.probe = probe_fn(app, chat.id, log=log)
+        info.probe = probe_fn(app, info.chat_id, log=log)
         if info.probe == "silent":
             log(f"{bot_label(chat)}: не ответил на /start → RED")
         elif info.probe == "replied":
@@ -107,11 +109,11 @@ def _probe_menu(
 
 
 def _bot_session(
-    app: Any,
+    app: Client,
     infos: list[BotInfo],
     session_name: str,
     *,
-    restore: Callable[[Any], None],
+    restore: Callable[[Client], None],
     ask: Callable[..., Any],
     confirm: Callable[[str], Any],
     probe_fn: Callable[..., str] = probe_bot,
@@ -155,7 +157,7 @@ def clean_bots(
     sessions: list[str],
     *,
     client: Callable[..., Any] = telegram_client,
-    restore: Callable[[Any], None] = restore_client_loop,
+    restore: Callable[[Client], None] = restore_client_loop,
     ask: Callable[..., Any] = ask_chats,
     confirm: Callable[[str], Any] = ask_confirm,
     probe_fn: Callable[..., str] = probe_bot,

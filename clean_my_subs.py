@@ -5,6 +5,9 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any
 
+from pyrogram import Client
+from pyrogram.types import Chat
+
 from catalog import chat_label
 from overlap import check_duplicate_group_unsubscribes, find_channel_overlaps
 from plan import ActionPlan, apply_action_plan, rollback_session
@@ -42,7 +45,7 @@ def choice_row(
     *,
     checked: bool | None = None,
     action_note: str | None = None,
-) -> tuple[StyledTitle, Any, bool]:
+) -> tuple[StyledTitle, Chat, bool]:
     style, label = _LABELS[candidate.category]
     parts = [chat_label(candidate.chat)]
     if candidate.voice:
@@ -124,7 +127,7 @@ def _apply_selected_action_group(
     state: dict[str, Any],
     text_fn: Callable[..., Any],
     app: Any,
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if act_type == "clear":
@@ -157,7 +160,7 @@ def _manage_action_plan(
     select_fn: Callable[..., Any],
     text_fn: Callable[..., Any],
     app: Any,
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if state is None:
@@ -219,7 +222,7 @@ def _inspect_overlaps_menu(
         log("Пересечения обнаружены, но сопоставимые временные окна отсутствуют.")
         return
 
-    choices: list[tuple[str, Any]] = []
+    choices: list[tuple[str, int]] = []
     for idx, item in enumerate(compared):
         title_a = getattr(item["chat_a"], "title", "канал A")
         title_b = getattr(item["chat_b"], "title", "канал B")
@@ -271,7 +274,7 @@ def _drilldown_menu(
     ask_chats_fn: Callable[..., Any],
     text_fn: Callable[..., Any],
     evaluate_fn: Callable[..., Any],
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     channel_choices = [(chat_label(chat), chat, False) for chat in reviewed.chats()]
@@ -312,7 +315,7 @@ def _review_and_apply_menu(
     *,
     confirm_fn: Callable[[str], Any],
     session_name: str,
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if plan.is_empty():
@@ -346,7 +349,7 @@ def _rollback_menu(
     session_name: str,
     *,
     confirm_fn: Callable[[str], Any],
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if not confirm_fn(f"Откатить обратимые изменения сессии {session_name}?"):
@@ -369,7 +372,7 @@ def interactive_session_loop(
     confirm_fn: Callable[[str], Any],
     select_fn: Callable[..., Any],
     text_fn: Callable[..., Any],
-    restore_fn: Callable[[Any], None],
+    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     plan = ActionPlan()
@@ -446,7 +449,7 @@ def clean_subscriptions(
     sessions: list[str],
     *,
     client: Callable[..., Any] = telegram_client,
-    restore: Callable[[Any], None] = restore_client_loop,
+    restore: Callable[[Client], None] = restore_client_loop,
     evaluate_fn: Callable[..., Any] = evaluate,
     ask: Callable[[list[Any]], Any] = _ask_unsubscribe,
     confirm: Callable[[str], Any] = ask_confirm,

@@ -10,6 +10,7 @@ from time import sleep as default_sleep
 from typing import Any, Callable
 
 from pyrogram import enums
+from pyrogram.types import Chat, Message
 
 from catalog import chat_label
 from dialogs import list_dialogs
@@ -52,7 +53,7 @@ class Review:
         items.sort(key=lambda item: _PRIORITY[item.category])
         return items
 
-    def chats(self) -> list[Any]:
+    def chats(self) -> list[Chat]:
         return [row["chat"] for row in self._rows]
 
     def for_overlap(self) -> list[dict[str, Any]]:
@@ -141,7 +142,7 @@ def scan(
 
 def _sample(
     app: Any,
-    chat: Any,
+    chat: Chat,
     scan_start: datetime,
     *,
     log: Callable[[str], None],
@@ -149,16 +150,17 @@ def _sample(
     rng: Callable[..., float],
 ) -> dict[str, Any]:
     full = _get_chat(app, chat, log, sleep, rng)
-    posts: list[Any] = []
+    posts: list[Message] = []
     created_at = None
     members = 0
     fetch_err = None
     description = ""
-    if full is not None:
+    if full is not None and chat.id is not None:
+        chat_id = chat.id
         members = getattr(full, "members_count", 0) or 0
         description = getattr(full, "description", None) or ""
-        posts, err = retry_on_flood(
-            lambda: fetch_posts(app, chat.id),
+        fetched, err = retry_on_flood(
+            lambda: fetch_posts(app, chat_id),
             sleep=sleep,
             rng=rng,
             log=log,
@@ -167,8 +169,8 @@ def _sample(
         if err is not None:
             fetch_err = f"{type(err).__name__}: {err}"
             log(f"Ошибка при получении постов {chat_label(chat)}: {err}")
-        posts = posts or []
-        created_at = fetch_creation_date(app, chat.id)
+        posts = fetched or []
+        created_at = fetch_creation_date(app, chat_id)
     else:
         fetch_err = "чат не прочитан"
     pubs = group_media_publications(posts)
@@ -202,11 +204,13 @@ def _sample(
 
 def _get_chat(
     app: Any,
-    chat: Any,
+    chat: Chat,
     log: Callable[[str], None],
     sleep: Callable[[float], None],
     rng: Callable[..., float],
-) -> Any:
+) -> Chat | None:
+    if chat.id is None:
+        return None
     val, error = retry_on_flood(
         lambda: app.get_chat(chat.id),
         sleep=sleep,

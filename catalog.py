@@ -4,8 +4,10 @@ from typing import Any
 
 from pyrogram import enums
 from pyrogram.errors import RPCError
+from pyrogram.types import Chat, Dialog
 
 from dialogs import list_dialogs
+from ui import StyledTitle
 from ui import ask_chats as _ask
 from ui import ask_confirm as _confirm
 
@@ -14,8 +16,10 @@ ALL_PUBLIC = "public"
 ALL_PRIVATE = "private"
 ALL_BASIC = "basic"
 
+UiRows = list[tuple[str | StyledTitle, str | int, bool] | tuple[str]]
 
-def chat_label(chat: Any) -> str:
+
+def chat_label(chat: Chat) -> str:
     title = getattr(chat, "title", None) or "без названия"
     username = getattr(chat, "username", None)
     if username:
@@ -23,15 +27,17 @@ def chat_label(chat: Any) -> str:
     return f"{title} — {chat.id}"
 
 
-def _membership_catalog(dialogs: Iterable[Any]) -> tuple[list[Any], list[Any], list[Any]]:
-    public: list[Any] = []
-    private: list[Any] = []
-    basic: list[Any] = []
-    seen_ids: set[Any] = set()
+def _membership_catalog(
+    dialogs: Iterable[Dialog],
+) -> tuple[list[Chat], list[Chat], list[Chat]]:
+    public: list[Chat] = []
+    private: list[Chat] = []
+    basic: list[Chat] = []
+    seen_ids: set[int] = set()
 
     for item in dialogs:
-        chat = getattr(item, "chat", item)
-        if chat is None or not hasattr(chat, "id") or not hasattr(chat, "type"):
+        chat = item.chat
+        if chat is None or chat.type is None or chat.id is None:
             continue
         if chat.id in seen_ids:
             continue
@@ -49,8 +55,8 @@ def _membership_catalog(dialogs: Iterable[Any]) -> tuple[list[Any], list[Any], l
 
 
 def _sections(
-    public: list[Any], private: list[Any], basic: list[Any]
-) -> tuple[tuple[Any, ...], ...]:
+    public: list[Chat], private: list[Chat], basic: list[Chat]
+) -> tuple[tuple[list[Chat], str, str, str], ...]:
     return (
         (public, ALL_PUBLIC, "Все публичные", "Публичные супергруппы"),
         (private, ALL_PRIVATE, "Все закрытые", "Закрытые супергруппы"),
@@ -59,18 +65,20 @@ def _sections(
 
 
 def _resolve_selection(
-    public: list[Any],
-    private: list[Any],
-    basic: list[Any],
-    values: Iterable[Any],
-) -> list[Any]:
+    public: list[Chat],
+    private: list[Chat],
+    basic: list[Chat],
+    values: Iterable[str | int],
+) -> list[Chat]:
     val_set = set(values)
     selected_ids = {v for v in val_set if isinstance(v, int) and not isinstance(v, bool)}
-    result: list[Any] = []
-    seen: set[Any] = set()
+    result: list[Chat] = []
+    seen: set[int] = set()
     for chats, flag, _bulk, _label in _sections(public, private, basic):
         include = ALL in val_set or flag in val_set
         for chat in chats:
+            if chat.id is None:
+                continue
             if chat.id not in seen and (include or chat.id in selected_ids):
                 seen.add(chat.id)
                 result.append(chat)
@@ -79,15 +87,15 @@ def _resolve_selection(
 
 
 def _build_choices(
-    public: list[Any],
-    private: list[Any],
-    basic: list[Any],
-    previous_selected: set[Any],
-) -> list[Any]:
+    public: list[Chat],
+    private: list[Chat],
+    basic: list[Chat],
+    previous_selected: set[str | int],
+) -> UiRows:
     # ponytail: plain tuples (title, value, checked) / (label,) avoid leaking
     # questionary into catalog logic
     sections = _sections(public, private, basic)
-    choices: list[Any] = [
+    choices: UiRows = [
         ("Все показанные", ALL, ALL in previous_selected),
     ]
     for chats, value, bulk, _label in sections:
@@ -98,23 +106,25 @@ def _build_choices(
             continue
         choices.append((label,))
         for chat in chats:
+            if chat.id is None:
+                continue
             choices.append((chat_label(chat), chat.id, chat.id in previous_selected))
     return choices
 
 
 def select_from_dialogs(
-    dialogs: Iterable[Any],
+    dialogs: Iterable[Dialog],
     *,
-    ask: Callable[[list[Any]], Any] = _ask,
+    ask: Callable[[UiRows], Any] = _ask,
     confirm: Callable[[str], Any] = _confirm,
     log: Callable[[str], None] = logging.info,
-) -> list[Any]:
+) -> list[Chat]:
     public, private, basic = _membership_catalog(dialogs)
     if not public and not private and not basic:
         log("Нет чатов для выбора.")
         return []
 
-    previous_selected: set[Any] = set()
+    previous_selected: set[str | int] = set()
 
     while True:
         choices = _build_choices(public, private, basic, previous_selected)
@@ -147,10 +157,10 @@ def select_from_dialogs(
 def prompt_selection(
     app: Any,
     *,
-    ask: Callable[[list[Any]], Any] | None = None,
+    ask: Callable[[UiRows], Any] | None = None,
     confirm: Callable[[str], Any] | None = None,
     log: Callable[[str], None] = logging.info,
-) -> list[Any]:
+) -> list[Chat]:
     if ask is None:
         ask = _ask
     if confirm is None:

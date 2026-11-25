@@ -12,6 +12,8 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
+from pyrogram.types import Chat, Message, MessageEntity
+
 from subs import _to_utc_dt, group_media_publications
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -26,12 +28,12 @@ class _PairContext:
 
     id_a: int
     id_b: int
-    chat_a: Any
-    chat_b: Any
+    chat_a: Chat
+    chat_b: Chat
     ids_a: set[int]
     ids_b: set[int]
-    map_a: dict[int, Any]
-    map_b: dict[int, Any]
+    map_a: dict[int, Message]
+    map_b: dict[int, Message]
 
 
 def normalize_text(text: str) -> str:
@@ -69,7 +71,7 @@ def normalize_url(url: str) -> str:
         return url.strip()
 
 
-def extract_urls(text: str, entities: list[Any] | None = None) -> list[str]:
+def extract_urls(text: str, entities: list[MessageEntity] | None = None) -> list[str]:
     """Извлечение и нормализация адресов материалов из текста и Telegram-сущностей."""
     urls: list[str] = []
     for match in _URL_RE.finditer(text or ""):
@@ -86,7 +88,7 @@ def extract_urls(text: str, entities: list[Any] | None = None) -> list[str]:
     return urls
 
 
-def post_reference(chat: Any, item: Any) -> str:
+def post_reference(chat: Chat, item: Message) -> str:
     """Ссылка на публикацию в Telegram или локальный идентификатор без выдуманных URL."""
     msg_id = getattr(item, "id", None) or 0
     username = getattr(chat, "username", None)
@@ -104,7 +106,6 @@ def build_overlap_indices(
     dict[str, set[tuple[int, int]]],
 ]:
     """Линейное построение трёх локальных инвертированных индексов (Section 2)."""
-    # ponytail: O(N) проход по публикациям, пары строятся только из непустых пересечений
     text_index: dict[str, set[tuple[int, int]]] = {}
     forward_index: dict[tuple[int, int], set[tuple[int, int]]] = {}
     url_index: dict[str, set[tuple[int, int]]] = {}
@@ -263,11 +264,11 @@ def _compare_channel_pair(
 
     in_win_a = [
         p for p in row_a["publications"]
-        if _to_utc_dt(p.date) and w_start <= _to_utc_dt(p.date) <= w_end  # type: ignore[operator]
+        if (pub_dt := _to_utc_dt(p.date)) and w_start <= pub_dt <= w_end
     ]
     in_win_b = [
         p for p in row_b["publications"]
-        if _to_utc_dt(p.date) and w_start <= _to_utc_dt(p.date) <= w_end  # type: ignore[operator]
+        if (pub_dt := _to_utc_dt(p.date)) and w_start <= pub_dt <= w_end
     ]
     count_a, count_b = len(in_win_a), len(in_win_b)
 

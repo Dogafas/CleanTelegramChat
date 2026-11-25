@@ -6,16 +6,18 @@ import logging
 import os
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
-from pyrogram import enums
+from pyrogram import Client, enums
 from pyrogram.errors import FloodWait, RPCError
+from pyrogram.types import Chat
+from typesafe_sdk import Noul, TypeSafeClient
 
 from chat_folder import create_only, snapshot
 from dialogs import list_dialogs
-from session import prompt_sessions, restore_client_loop, telegram_client
+from session import _parse_env, prompt_sessions, restore_client_loop, telegram_client
 from subs import ANALYSIS_PAUSE, POSTS_WINDOW, fetch_posts
 from ui import ask_chats, ask_confirm
 from verdict import _post_text, load_typesafe_env
@@ -36,8 +38,6 @@ def categories_path(
     if not raw:
         path_env = env_file or (base / ".env")
         if path_env.is_file():
-            from session import _parse_env  # noqa: PLC0415
-
             data = _parse_env(path_env.read_text(encoding="utf-8"))
             raw = data.get("CATEGORIES_FILE", "").strip()
     if raw:
@@ -70,21 +70,23 @@ def split_assignment(scores: dict[str, Any], categories: list[str]) -> list[str]
     return [name for name in categories if float(scores[name]) >= NOUL_YES]
 
 
-def pick_peers(rows: list[tuple[float, int, Any]], limit: int) -> tuple[list[Any], list[Any]]:
+def pick_peers(
+    rows: list[tuple[float, int, Chat]], limit: int
+) -> tuple[list[Chat], list[Chat]]:
     sorted_rows = sorted(rows, key=lambda r: (-r[0], r[1]))
     k = max(0, limit)
     return [r[2] for r in sorted_rows[:k]], [r[2] for r in sorted_rows[k:]]
 
-def _chat_line(chat: Any) -> str:
+def _chat_line(chat: Chat) -> str:
     title = getattr(chat, "title", None) or "без названия"
     return f"{title} \u2014 {chat.id}"
 
 
 def render_sort_file(
     categories: list[str],
-    by_category: dict[str, list[Any]],
-    uncategorized: list[Any],
-    unevaluated: list[Any],
+    by_category: dict[str, list[tuple[float, int, Chat]]],
+    uncategorized: list[tuple[float, int, Chat]],
+    unevaluated: list[tuple[float, int, Chat]],
 ) -> str:
     # порядок — обход диалогов (возрастающий index), сортировка не нужна
     sections: list[str] = []
@@ -136,7 +138,7 @@ def save_cache(path: Path, categories_hash: str, entries: dict[str, Any]) -> Non
 def sortable_dialogs(
     app: Any,
     log: Callable[[str], None] = logging.info,
-) -> list[Any] | None:
+) -> list[Chat] | None:
     try:
         main_dialogs, archive_dialogs, archive_error = list_dialogs(app)
     except RPCError as e:
@@ -144,12 +146,12 @@ def sortable_dialogs(
         return None
     if archive_error:
         log(f"Архив не прочитан: {archive_error}")
-    result: list[Any] = []
+    result: list[Chat] = []
     seen_ids: set[int] = set()
 
     for item in main_dialogs + archive_dialogs:
-        chat = getattr(item, "chat", item)
-        if chat is None or not hasattr(chat, "id") or not hasattr(chat, "type"):
+        chat = item.chat
+        if chat is None or chat.type is None or chat.id is None:
             continue
         if (
             chat.type in (enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP, enums.ChatType.GROUP)
@@ -161,7 +163,7 @@ def sortable_dialogs(
     return result
 
 
-def dialog_description(app: Any, chat: Any) -> str:
+def dialog_description(app: Any, chat: Chat) -> str:
     desc = getattr(chat, "description", None)
     if desc:
         return str(desc)
@@ -176,7 +178,7 @@ def history_texts(
     app: Any,
     chat_id: int,
     *,
-    sleep: Callable[[float], Any] = time.sleep,
+    sleep: Callable[[float], None] = time.sleep,
     rng: Callable[..., float] = random.uniform,
 ) -> list[str] | None:
     res = None
@@ -184,7 +186,9 @@ def history_texts(
         try:
             posts = fetch_posts(app, chat_id, POSTS_WINDOW)
         except FloodWait as e:
-            sleep(float(e.value))
+            # сервер присылает секунды; нечисловой value — консервативная пауза
+            value = e.value
+            sleep(float(value) if isinstance(value, (int, float)) else 5.0)
             posts = fetch_posts(app, chat_id, POSTS_WINDOW)
         res = [txt for m in posts if (txt := _post_text(m).strip())]
     except Exception:
@@ -195,8 +199,6 @@ def history_texts(
 
 
 def make_questions(categories: list[str]) -> dict[str, Any]:
-    from typesafe_sdk import Noul  # noqa: PLC0415
-
     return {
         f"c{i}": Noul(
             instructions=(
@@ -210,13 +212,13 @@ def make_questions(categories: list[str]) -> dict[str, Any]:
 
 
 def evaluate_dialog(
-    chat: Any,
+    chat: Chat,
     description: str,
     texts: list[str] | None,
     questions: dict[str, Any],
     categories: list[str],
     *,
-    evaluate_fn: Any = None,
+    evaluate_fn: Callable[..., dict[str, Any] | None] | None = None,
 ) -> dict[str, float] | None:
     state = {
         "title": getattr(chat, "title", None) or "без названия",
@@ -227,8 +229,6 @@ def evaluate_dialog(
     }
     try:
         if evaluate_fn is None:
-            from typesafe_sdk import TypeSafeClient  # noqa: PLC0415
-
             load_typesafe_env()
             with TypeSafeClient() as client:
                 response = client.system_one(state=state, questions=questions)
@@ -236,9 +236,12 @@ def evaluate_dialog(
             response = evaluate_fn(state, questions)
 
         scores: dict[str, float] = {}
+        answers = getattr(response, "answers", None)
+        if answers is None:
+            raise ValueError("Ответ модели без поля answers")
         for i, name in enumerate(categories):
             key = f"c{i}"
-            ans = response.answers[key]
+            ans = answers[key]
             noul_val = getattr(ans, "noul", None)
             if noul_val is None:
                 raise ValueError(f"Ответ {key} не содержит noul")
@@ -250,27 +253,29 @@ def evaluate_dialog(
 
 def classify_dialogs(
     app: Any,
-    dialogs: list[Any],
+    dialogs: list[Chat],
     categories: list[str],
     questions: dict[str, Any],
     cached_entries: dict[str, Any],
     *,
-    evaluate_fn: Any,
-    sleep: Callable[[float], Any],
+    evaluate_fn: Callable[..., dict[str, Any] | None] | None,
+    sleep: Callable[[float], None],
     rng: Callable[..., float],
     log: Callable[[str], None],
 ) -> tuple[
-    dict[str, list[tuple[float, int, Any]]],
-    list[tuple[float, int, Any]],
-    list[tuple[float, int, Any]],
+    dict[str, list[tuple[float, int, Chat]]],
+    list[tuple[float, int, Chat]],
+    list[tuple[float, int, Chat]],
     dict[str, Any],
 ]:
-    by_category: dict[str, list[tuple[float, int, Any]]] = {c: [] for c in categories}
-    uncategorized: list[tuple[float, int, Any]] = []
-    unevaluated: list[tuple[float, int, Any]] = []
+    by_category: dict[str, list[tuple[float, int, Chat]]] = {c: [] for c in categories}
+    uncategorized: list[tuple[float, int, Chat]] = []
+    unevaluated: list[tuple[float, int, Chat]] = []
     current_run_entries: dict[str, Any] = {}
 
     for index, chat in enumerate(dialogs):
+        if chat.id is None:
+            continue
         title = getattr(chat, "title", None) or "без названия"
         log(f"Оценка: {title} \u2014 {chat.id}")
 
@@ -335,9 +340,9 @@ def sort_account(
     client: Callable[..., Any] = telegram_client,
     ask: Callable[..., Any] = ask_chats,
     confirm: Callable[..., Any] = ask_confirm,
-    evaluate_fn: Any = None,
-    restore: Callable[[Any], None] = restore_client_loop,
-    sleep: Callable[[float], Any] = time.sleep,
+    evaluate_fn: Callable[..., dict[str, Any] | None] | None = None,
+    restore: Callable[[Client], None] = restore_client_loop,
+    sleep: Callable[[float], None] = time.sleep,
     rng: Callable[..., float] = random.uniform,
     log: Callable[[str], None] = logging.info,
     root: Path | str | None = None,
@@ -408,14 +413,14 @@ def sort_account(
 def choose_folders(
     app: Any,
     categories: list[str],
-    by_category: dict[str, list[tuple[float, int, Any]]],
+    by_category: dict[str, list[tuple[float, int, Chat]]],
     folder_limit: int,
     *,
     used: int,
-    titles: set[str],
+    titles: Collection[str],
     ask: Callable[..., Any],
     confirm: Callable[..., Any],
-    restore: Callable[[Any], None],
+    restore: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> list[str] | None:
     free = max(0, folder_limit - used)
@@ -427,7 +432,6 @@ def choose_folders(
         if len(name) > TITLE_MAX:
             log(f"«{name}» длиннее 12 символов — только файл.")
             continue
-        # ponytail: existing folders never updated; delete the tab in Telegram to rebuild
         if name in existing_titles:
             log(f"Вкладка «{name}» уже есть — только файл.")
             continue
@@ -476,7 +480,7 @@ def choose_folders(
 
 def create_folders(
     app: Any,
-    by_category: dict[str, list[tuple[float, int, Any]]],
+    by_category: dict[str, list[tuple[float, int, Chat]]],
     max_chats: int,
     selected: list[str],
     *,
@@ -489,7 +493,7 @@ def create_folders(
         status, unresolved, created = create_only(
             app,
             name,
-            [chat.id for chat in kept_chats],
+            [chat.id for chat in kept_chats if chat.id is not None],
             used_ids=used_ids,
             log=log,
         )

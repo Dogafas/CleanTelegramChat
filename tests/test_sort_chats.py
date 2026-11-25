@@ -39,7 +39,7 @@ class CategoriesTests(unittest.TestCase):
 
     def test_load_categories_success(self):
         cat_file = self.tmp_path / "cats.txt"
-        cat_file.write_text("  ИТ  \n# новости\nИТ\n\n  Крипта\n", encoding="utf-8")  # noqa: RUF001
+        cat_file.write_text("  ИТ  \n# новости\nИТ\n\n  Крипта\n", encoding="utf-8")
         cats = load_categories(cat_file)
         self.assertEqual(cats, ["ИТ", "# новости", "Крипта"])
 
@@ -461,9 +461,9 @@ class SortAccountEndToEndTests(unittest.TestCase):
                     # Folder limit default = 4 folders, so free = 4 - 2 = 2
                     item_val: Any = raw.types.JsonObjectValue(
                         key="dialog_filters_limit_default",
-                        value=raw.types.JsonNumber(value=4.0),  # type: ignore[reportArgumentType]
+                        value=raw.types.JsonNumber(value=4.0),
                     )
-                    return raw.types.JsonObject(value=[item_val])  # type: ignore[reportArgumentType]
+                    return raw.types.JsonObject(value=[item_val])
                 if isinstance(query, raw.functions.messages.GetDialogFilters):
                     return [existing_tab, work_tab]
                 if isinstance(query, raw.functions.messages.UpdateDialogFilter):
