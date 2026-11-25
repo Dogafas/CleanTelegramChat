@@ -10,16 +10,16 @@ from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
-from pyrogram import Client, enums
-from pyrogram.errors import FloodWait, RPCError
+from pyrogram.errors import RPCError
 from pyrogram.types import Chat
 from typesafe_sdk import Noul, TypeSafeClient
 
+import ui
 from chat_folder import create_only, snapshot
-from dialogs import list_dialogs
-from session import _parse_env, prompt_sessions, restore_client_loop, telegram_client
+from dialogs import is_sortable_dialog, list_dialogs
+from purge import retry_on_flood
+from session import parse_env, prompt_sessions, telegram_client
 from subs import ANALYSIS_PAUSE, POSTS_WINDOW, fetch_posts
-from ui import ask_chats, ask_confirm
 from verdict import _post_text, load_typesafe_env
 
 RESERVED = ("без категории", "не оценено")
@@ -38,7 +38,7 @@ def categories_path(
     if not raw:
         path_env = env_file or (base / ".env")
         if path_env.is_file():
-            data = _parse_env(path_env.read_text(encoding="utf-8"))
+            data = parse_env(path_env.read_text(encoding="utf-8"))
             raw = data.get("CATEGORIES_FILE", "").strip()
     if raw:
         p = Path(raw)
@@ -153,10 +153,7 @@ def sortable_dialogs(
         chat = item.chat
         if chat is None or chat.type is None or chat.id is None:
             continue
-        if (
-            chat.type in (enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP, enums.ChatType.GROUP)
-            and chat.id not in seen_ids
-        ):
+        if is_sortable_dialog(chat) and chat.id not in seen_ids:
             seen_ids.add(chat.id)
             result.append(chat)
 
@@ -180,17 +177,19 @@ def history_texts(
     *,
     sleep: Callable[[float], None] = time.sleep,
     rng: Callable[..., float] = random.uniform,
+    log: Callable[[str], None] = logging.info,
 ) -> list[str] | None:
-    res = None
+    posts, error = retry_on_flood(
+        lambda: fetch_posts(app, chat_id, POSTS_WINDOW),
+        sleep=sleep,
+        rng=rng,
+        log=log,
+        what=", история диалога",
+    )
     try:
-        try:
-            posts = fetch_posts(app, chat_id, POSTS_WINDOW)
-        except FloodWait as e:
-            # сервер присылает секунды; нечисловой value — консервативная пауза
-            value = e.value
-            sleep(float(value) if isinstance(value, (int, float)) else 5.0)
-            posts = fetch_posts(app, chat_id, POSTS_WINDOW)
-        res = [txt for m in posts if (txt := _post_text(m).strip())]
+        res = None if error is not None else [
+            txt for m in posts or [] if (txt := _post_text(m).strip())
+        ]
     except Exception:
         res = None
     finally:
@@ -280,7 +279,7 @@ def classify_dialogs(
         log(f"Оценка: {title} \u2014 {chat.id}")
 
         desc = dialog_description(app, chat)
-        texts = history_texts(app, chat.id, sleep=sleep, rng=rng)
+        texts = history_texts(app, chat.id, sleep=sleep, rng=rng, log=log)
 
         chat_id_str = str(chat.id)
         scores: dict[str, float] | None = None
@@ -338,10 +337,8 @@ def sort_account(
     *,
     categories: list[str],
     client: Callable[..., Any] = telegram_client,
-    ask: Callable[..., Any] = ask_chats,
-    confirm: Callable[..., Any] = ask_confirm,
+    ui: Any = ui,
     evaluate_fn: Callable[..., dict[str, Any] | None] | None = None,
-    restore: Callable[[Client], None] = restore_client_loop,
     sleep: Callable[[float], None] = time.sleep,
     rng: Callable[..., float] = random.uniform,
     log: Callable[[str], None] = logging.info,
@@ -399,9 +396,7 @@ def sort_account(
             folder_limit,
             used=used,
             titles=titles,
-            ask=ask,
-            confirm=confirm,
-            restore=restore,
+            ui=ui,
             log=log,
         )
         if selected:
@@ -418,9 +413,7 @@ def choose_folders(
     *,
     used: int,
     titles: Collection[str],
-    ask: Callable[..., Any],
-    confirm: Callable[..., Any],
-    restore: Callable[[Client], None],
+    ui: Any,
     log: Callable[[str], None],
 ) -> list[str] | None:
     free = max(0, folder_limit - used)
@@ -447,13 +440,9 @@ def choose_folders(
 
     msg = f"Отметьте категории для вкладок. Свободных слотов: {free}"
     while True:
-        try:
-            selected = ask(checkbox_items, message=msg)
-        except TypeError:
-            selected = ask(checkbox_items)
+        selected = ui.ask_chats(app, checkbox_items, message=msg)
 
         if not selected:
-            restore(app)
             log("Вкладки не выбраны.")
             return None
 
@@ -469,8 +458,7 @@ def choose_folders(
             continue
         break
 
-    ok = confirm(f"Создать {len(selected)} вкладок?")
-    restore(app)
+    ok = ui.ask_confirm(app, f"Создать {len(selected)} вкладок?")
     if ok is not True:
         log("Вкладки не созданы.")
         return None

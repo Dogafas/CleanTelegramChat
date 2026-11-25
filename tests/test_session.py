@@ -19,7 +19,6 @@ from session import (
     prompt_sessions,
     resolve_credentials,
     resolve_proxy,
-    restore_client_loop,
     sessions_dir,
     telegram_client,
 )
@@ -45,7 +44,7 @@ class ResolveCredentialsTests(unittest.TestCase):
 
     def test_parse_env_reads_typesafe_and_sort_keys(self):
         raw = "TYPESAFE_API_KEY=abc\nCATEGORIES_FILE=my.txt\nTELEGRAM_API_ID=1\n"
-        data = session._parse_env(raw)
+        data = session.parse_env(raw)
         self.assertEqual(data["TYPESAFE_API_KEY"], "abc")
         self.assertEqual(data["CATEGORIES_FILE"], "my.txt")
     def test_all_sources(self):
@@ -635,31 +634,6 @@ class TelegramClientTests(unittest.TestCase):
             self.assertFalse(asyncio.get_event_loop().is_closed())
         finally:
             asyncio.set_event_loop(old_loop)
-
-    def test_restore_client_loop(self):
-        old_loop = asyncio.get_event_loop()
-        client_loop: asyncio.AbstractEventLoop | None = None
-        try:
-            client_loop = asyncio.new_event_loop()
-            app = type("FakeApp", (), {"loop": client_loop})()
-
-            # Симулируем вопросary: thread loop подменён и закрыт
-            stolen = asyncio.new_event_loop()
-            stolen.close()
-            asyncio.set_event_loop(stolen)
-
-            restore_client_loop(app)
-            self.assertIs(asyncio.get_event_loop(), client_loop)
-
-            # app без loop / с закрытым loop — не падает, ставит рабочий loop
-            restore_client_loop(object())
-            restore_client_loop(type("FakeApp2", (), {"loop": stolen})())
-            self.assertFalse(asyncio.get_event_loop().is_closed())
-        finally:
-            asyncio.set_event_loop(old_loop)
-            if client_loop is not None:
-                client_loop.close()
-
 
 if __name__ == "__main__":
     unittest.main()

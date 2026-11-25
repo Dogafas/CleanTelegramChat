@@ -8,9 +8,20 @@ from typing import Any
 
 from pyrogram import Client
 
-from ui import ask_confirm as _ask_confirm
-from ui import ask_select as _ask_select
-from ui import ask_text as _ask_text
+from ui import ask_confirm, ask_select, ask_text
+
+
+def _ask_select(message: str, choices: list[tuple[str, str]]) -> str | None:
+    # Меню выбора сессии идёт до подключения клиента — восстанавливать нечего.
+    return ask_select(None, message, choices)
+
+
+def _ask_text(message: str) -> str | None:
+    return ask_text(None, message)
+
+
+def _ask_confirm(message: str, default: bool = False) -> bool:
+    return ask_confirm(None, message, default=default)
 
 
 def sync_list[T](agen: AsyncGenerator[T]) -> list[T]:
@@ -42,9 +53,6 @@ PROXY_USERNAME = "TELEGRAM_PROXY_USERNAME"
 PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"
 PROXY_KEYS = (PROXY_SCHEME, PROXY_HOSTNAME, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD)
 PROXY_SCHEMES = ("socks5", "socks4", "http")
-# Jev/TypeSafe (verdict.py): ключ и опциональные endpoint/model — переживают rewrite .env
-TYPESAFE_KEYS = ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TYPESAFE_DEFAULT_MODEL")
-SORT_KEYS = ("CATEGORIES_FILE",)
 _MAX_PORT = 65535
 
 
@@ -165,7 +173,8 @@ def prompt_sessions(
         elif choice == DELETE_SESSION:
             _handle_delete_session(root, existing, ask_select, ask_confirm)
 
-def _parse_env(content: str) -> dict[str, str]:
+def parse_env(content: str) -> dict[str, str]:
+    """Все валидные KEY=value строки .env; специальные ключи знают их владельцы."""
     data: dict[str, str] = {}
     for line in content.splitlines():
         trimmed = line.strip()
@@ -181,7 +190,7 @@ def _parse_env(content: str) -> dict[str, str]:
             and v not in ('"', "'")
         ):
             v = v[1:-1]
-        if k in (ENV_ID, ENV_HASH, *PROXY_KEYS, *TYPESAFE_KEYS, *SORT_KEYS):
+        if k:
             data[k] = v
     return data
 
@@ -189,13 +198,13 @@ def _parse_env(content: str) -> dict[str, str]:
 def _write_env(path: Path, api_id: int, api_hash: str) -> None:
     existing_data: dict[str, str] = {}
     if path.is_file():
-        existing_data = _parse_env(path.read_text(encoding="utf-8"))
+        existing_data = parse_env(path.read_text(encoding="utf-8"))
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{ENV_ID}={api_id}", f"{ENV_HASH}={api_hash}"]
-    for key in (*PROXY_KEYS, *TYPESAFE_KEYS, *SORT_KEYS):
-        if key in existing_data:
-            lines.append(f"{key}={existing_data[key]}")
+    for key, value in existing_data.items():
+        if key not in (ENV_ID, ENV_HASH):
+            lines.append(f"{key}={value}")
     content = "\n".join(lines) + "\n"
     path.write_text(content, encoding="utf-8")
 
@@ -214,7 +223,7 @@ def resolve_credentials(
     if target_path.is_file():
         try:
             content = target_path.read_text(encoding="utf-8")
-            data = _parse_env(content)
+            data = parse_env(content)
             if ENV_ID in data and ENV_HASH in data:
                 return int(data[ENV_ID]), data[ENV_HASH]
         except (ValueError, OSError):
@@ -236,7 +245,7 @@ def _load_proxy_source(
     target_path = Path(path) if path is not None else env_path()
     if not target_path.is_file():
         return None
-    file_data = _parse_env(target_path.read_text(encoding="utf-8"))
+    file_data = parse_env(target_path.read_text(encoding="utf-8"))
     file_proxy = {
         k: file_data[k].strip()
         for k in PROXY_KEYS
@@ -293,17 +302,6 @@ def resolve_proxy(
         proxy["username"] = source[PROXY_USERNAME]
         proxy["password"] = source[PROXY_PASSWORD]
     return proxy
-
-
-def restore_client_loop(app: Client) -> None:
-    """prompt_toolkit (questionary) подменяет thread loop через asyncio.run().
-
-    Синхронные вызовы Pyrogram и client.stop() требуют loop клиента —
-    вызывайте после любых промптов внутри блока telegram_client.
-    """
-    loop = getattr(app, "loop", None)
-    if loop is not None and not loop.is_closed():
-        asyncio.set_event_loop(loop)
 
 
 @contextmanager

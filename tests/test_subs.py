@@ -13,6 +13,7 @@ import verdict
 from clean_my_subs import _manage_action_plan, choice_row
 from plan import ActionPlan
 from review import Candidate
+from tests.fakes import FakeUi
 from verdict import QUESTIONS, is_valid_verdict, text_reasons, verdict_label
 
 
@@ -84,7 +85,7 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
 
         prompted_choices: list = []
 
-        def fake_ask_chats(choices):
+        def fake_ask_chats(choices, message=""):
             prompted_choices.append([(c[1].id, c[2]) for c in choices])
             return [chat2]
 
@@ -97,11 +98,10 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
             candidates,
             plan,
             state,
-            ask_chats_fn=fake_ask_chats,
-            select_fn=fake_select,
-            text_fn=lambda *_: "Чтение",
+            ui=FakeUi(
+                chats=fake_ask_chats, select=fake_select, text=lambda _message: "Чтение"
+            ),
             app=None,
-            restore_fn=lambda *_: None,
             log=lambda *_: None,
         )
 
@@ -118,11 +118,10 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
             candidates,
             plan,
             state,
-            ask_chats_fn=fake_ask_chats,
-            select_fn=fake_select,
-            text_fn=lambda *_: "Чтение",
+            ui=FakeUi(
+                chats=fake_ask_chats, select=fake_select, text=lambda _message: "Чтение"
+            ),
             app=None,
-            restore_fn=lambda *_: None,
             log=lambda *_: None,
         )
 
@@ -140,11 +139,12 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
             candidates,
             plan,
             state,
-            ask_chats_fn=lambda *_: None,
-            select_fn=lambda *_, **__: actions_sequence.pop(0),
-            text_fn=lambda *_: "",
+            ui=FakeUi(
+                chats=lambda *_: None,
+                select=lambda *_, **__: actions_sequence.pop(0),
+                text=lambda _message: "",
+            ),
             app=None,
-            restore_fn=lambda *_: None,
             log=lambda *_: None,
         )
 
@@ -162,11 +162,12 @@ class ActionPlanStatePreservationTests(unittest.TestCase):
             candidates,
             plan,
             {"leave_initialized": True},
-            ask_chats_fn=lambda *_: [],
-            select_fn=lambda *_, **__: actions_sequence.pop(0),
-            text_fn=lambda *_: "",
+            ui=FakeUi(
+                chats=lambda *_: [],
+                select=lambda *_, **__: actions_sequence.pop(0),
+                text=lambda _message: "",
+            ),
             app=None,
-            restore_fn=lambda *_: None,
             log=lambda *_: None,
         )
 

@@ -7,14 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace as Chat
 from typing import Any
 
-from plan import (
+from journal import (
     FOREVER_MUTE,
-    ActionPlan,
-    apply_action_plan,
     load_rollback_journal,
     rollback_session,
     save_rollback_journal,
 )
+from plan import ActionPlan, apply_action_plan
 
 
 class ActionPlanConflictTests(unittest.TestCase):

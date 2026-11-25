@@ -42,11 +42,11 @@ All of the user's bots live in the archive inside the "Bots" folder; the scan mu
    - **GRAY «Недостаточно данных»**: no usable texts or verdict error. Unchecked by default.
    - Manual checkbox changes and explicit confirmation remain mandatory before any mutation.
 
-7. **Actions and rollback (`plan.py`)**:
+7. **Actions and rollback (`plan.py` + `journal.py`)**:
    - `Stop` = `block_user` — Telegram's native "stop bot". Reversible via `unblock_user`; restorable in the journal with the ADR 0010 state-guard (user unblocked manually → skip).
    - `DeleteChat` = `delete_chat_history` — removes the dialog. Non-restorable, tracked like `leave`.
    - `Stop` precedes `DeleteChat` when both are selected. Deleting the dialog removes the bot from the "Bots" folder as a Telegram side effect; folder filters themselves are never modified (ADR 0008 discipline).
-   - Journal persistence, atomic writes, and consumption semantics follow ADR 0010.
+   - Journal persistence, atomic writes, and consumption semantics follow ADR 0010. The journal lives in `journal.py` (records, state-guards, undo); `plan.py` builds and applies the plan.
 
 8. **Layers**:
    - Core module `bots.py` (scan, signals, candidates); CLI scenario `clean_my_bots.py` (like `clean_my_subs.py`).
@@ -59,6 +59,6 @@ All of the user's bots live in the archive inside the "Bots" folder; the scan mu
 
 ## Sources
 
-- `dialogs.py` (`list_dialogs`), `subs.py` (`AD_MARKERS`, `metric_signals`), `review.py` (candidate routing), `plan.py` (ActionPlan, journal), `purge.py` (`retry_on_flood`), `verdict.py` (`evaluate`);
+- `dialogs.py` (`list_dialogs`, `is_bot_dialog`), `subs.py` (`AD_MARKERS`, `metric_signals`), `review.py` (candidate routing), `plan.py` (ActionPlan, apply), `journal.py` (журнал отката, rollback), `purge.py` (`retry_on_flood`), `verdict.py` (`evaluate`);
 - Kurigram: `Dialog.top_message`, `ChatType.BOT`, `Chat.bio`, `get_chat_history`, `block_user` / `unblock_user`, `delete_chat_history`;
 - `docs/adr/0009-text-fail-unsubscribe.md`, `docs/adr/0010-reading-modes-and-rollback-journal.md`, `docs/channel-telegram-signals.md`.

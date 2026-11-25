@@ -14,12 +14,20 @@ from typing import Any
 
 from pyrogram.types import Chat, Message, MessageEntity
 
-from subs import _to_utc_dt, group_media_publications
+from subs import Publication, _to_utc_dt
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 MIN_DUPLICATE_TEXT_LEN = 25
 MIN_DUPLICATE_WORDS = 4
 MIN_CHANNELS_TO_COMPARE = 2
+
+
+@dataclass
+class OverlapInput:
+    """Вход сравнения: канал и его публикации; строится review.for_overlap()."""
+
+    chat: Chat
+    publications: list[Publication]
 
 
 @dataclass
@@ -32,8 +40,8 @@ class _PairContext:
     chat_b: Chat
     ids_a: set[int]
     ids_b: set[int]
-    map_a: dict[int, Message]
-    map_b: dict[int, Message]
+    map_a: dict[int, Publication]
+    map_b: dict[int, Publication]
 
 
 def normalize_text(text: str) -> str:
@@ -88,7 +96,7 @@ def extract_urls(text: str, entities: list[MessageEntity] | None = None) -> list
     return urls
 
 
-def post_reference(chat: Chat, item: Message) -> str:
+def post_reference(chat: Chat, item: Message | Publication) -> str:
     """Ссылка на публикацию в Telegram или локальный идентификатор без выдуманных URL."""
     msg_id = getattr(item, "id", None) or 0
     username = getattr(chat, "username", None)
@@ -99,7 +107,7 @@ def post_reference(chat: Chat, item: Message) -> str:
 
 
 def build_overlap_indices(
-    channels_data: list[dict[str, Any]],
+    channels_data: list[OverlapInput],
 ) -> tuple[
     dict[str, set[tuple[int, int]]],
     dict[tuple[int, int], set[tuple[int, int]]],
@@ -111,12 +119,10 @@ def build_overlap_indices(
     url_index: dict[str, set[tuple[int, int]]] = {}
 
     for row in channels_data:
-        chat = row["chat"]
-        chat_id = chat.id
-        pubs = row.get("publications")
-        if pubs is None:
-            pubs = group_media_publications(row.get("posts") or [])
-            row["publications"] = pubs
+        chat_id = row.chat.id
+        if chat_id is None:
+            continue
+        pubs = row.publications
 
         for pub in pubs:
             pub_id = pub.id
@@ -227,19 +233,26 @@ def _match_urls(
 
 
 def _compare_channel_pair(
-    row_a: dict[str, Any],
-    row_b: dict[str, Any],
+    row_a: OverlapInput,
+    row_b: OverlapInput,
     text_idx: dict[str, set[tuple[int, int]]],
     fwd_idx: dict[tuple[int, int], set[tuple[int, int]]],
     url_idx: dict[str, set[tuple[int, int]]],
 ) -> dict[str, Any]:
     """Сравнение пары каналов в границах общего временного окна (Section 2)."""
-    chat_a = row_a["chat"]
-    chat_b = row_b["chat"]
+    chat_a = row_a.chat
+    chat_b = row_b.chat
+    id_a, id_b = chat_a.id, chat_b.id
+    if id_a is None or id_b is None:
+        return {
+            "chat_a": chat_a, "chat_b": chat_b, "has_comparable_window": False,
+            "status": "incomparable_windows", "reason": "канал без id",
+            "overlap_rate_a": 0.0, "overlap_rate_b": 0.0,
+        }
 
-    dates_a = [_to_utc_dt(p.date) for p in row_a["publications"] if getattr(p, "date", None)]
+    dates_a = [_to_utc_dt(p.date) for p in row_a.publications if getattr(p, "date", None)]
     dates_a = [d for d in dates_a if d is not None]
-    dates_b = [_to_utc_dt(p.date) for p in row_b["publications"] if getattr(p, "date", None)]
+    dates_b = [_to_utc_dt(p.date) for p in row_b.publications if getattr(p, "date", None)]
     dates_b = [d for d in dates_b if d is not None]
 
     if not dates_a or not dates_b:
@@ -263,11 +276,11 @@ def _compare_channel_pair(
         }
 
     in_win_a = [
-        p for p in row_a["publications"]
+        p for p in row_a.publications
         if (pub_dt := _to_utc_dt(p.date)) and w_start <= pub_dt <= w_end
     ]
     in_win_b = [
-        p for p in row_b["publications"]
+        p for p in row_b.publications
         if (pub_dt := _to_utc_dt(p.date)) and w_start <= pub_dt <= w_end
     ]
     count_a, count_b = len(in_win_a), len(in_win_b)
@@ -284,8 +297,8 @@ def _compare_channel_pair(
         }
 
     ctx = _PairContext(
-        id_a=chat_a.id,
-        id_b=chat_b.id,
+        id_a=id_a,
+        id_b=id_b,
         chat_a=chat_a,
         chat_b=chat_b,
         ids_a={p.id for p in in_win_a},
@@ -323,14 +336,14 @@ def _compare_channel_pair(
 
 
 def find_channel_overlaps(
-    channels_data: list[dict[str, Any]],
+    channels_data: list[OverlapInput],
 ) -> list[dict[str, Any]]:
     """Поиск пар каналов с пересечениями материалов за сопоставимое окно (Section 2)."""
     if len(channels_data) < MIN_CHANNELS_TO_COMPARE:
         return []
 
     text_idx, fwd_idx, url_idx = build_overlap_indices(channels_data)
-    by_chat_id: dict[int, dict[str, Any]] = {row["chat"].id: row for row in channels_data}
+    by_chat_id = {row.chat.id: row for row in channels_data if row.chat.id is not None}
 
     # Находим пары каналов, имеющие общие записи в индексах
     candidate_pairs: set[tuple[int, int]] = set()

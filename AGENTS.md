@@ -36,7 +36,7 @@ Done means all five commands above (after `uv sync`) are green. Hook: `.githooks
 - Kurigram types → `.venv/Lib/site-packages/pyrogram/types/`. Plan already names the fields → write the artifact, skip the library.
 - Jev `state` is text only (`channel`, `description`, `posts`). Quality Score and numeric metrics stay out. ADR 0009.
 - Слои «CLI-сценарии / ядро» → `tests/test_layers.py`: ядро не импортирует CLI, сценарии не импортируют друг друга. Новый корневой модуль — отнести к слою там же.
-- Модули ядра: `review` (скан, покрытие, кандидаты), `plan` (режимы чтения, журнал отката), `overlap` (межканальные совпадения), `chat_folder` (точечные мутации папок), `dialogs` (обход диалогов и архива), `subs` (метрики, склейка альбомов), `purge` (очистка, `retry_on_flood`), `bots` (боты: скан полной истории, сигналы, Jev-вердикт, `/start`-проба).
+- Модули ядра: `review` (скан, покрытие, кандидаты), `plan` (режимы чтения, план и применение), `journal` (журнал отката, undo), `overlap` (межканальные совпадения), `chat_folder` (точечные мутации папок), `dialogs` (обход диалогов и архива, предикаты типа диалога), `subs` (метрики, склейка альбомов), `purge` (очистка, `retry_on_flood`), `bots` (боты: скан полной истории, сигналы, Jev-вердикт, `/start`-проба).
 
 ## Agent skills
 

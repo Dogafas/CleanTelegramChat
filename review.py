@@ -8,13 +8,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import sleep as default_sleep
-from typing import Any
+from typing import Any, Literal
 
-from pyrogram import enums
 from pyrogram.types import Chat, Message
 
 from catalog import chat_label
-from dialogs import list_dialogs
+from dialogs import is_channel_subscription, list_dialogs
+from overlap import OverlapInput
 from purge import retry_on_flood
 from subs import (
     ANALYSIS_PAUSE,
@@ -30,17 +30,26 @@ from subs import (
 )
 from verdict import REASON_RU, VerdictStatus, has_text, is_valid_verdict, status_of, text_reasons
 
-_PRIORITY = {"red": 0, "yellow": 1, "gray": 2}
+CATEGORY_PRIORITY = {"red": 0, "yellow": 1, "gray": 2}
+Category = Literal["red", "yellow", "gray"]
 
 
 @dataclass
 class Candidate:
-    category: str
+    category: Category
     reasons: list[str]
     voice: str | None
     checked: bool
     chat: Any
     status: VerdictStatus = VerdictStatus.VALID
+
+
+def category_counts(candidates: list[Candidate]) -> dict[str, int]:
+    """Счётчик кандидатов по категориям для сводки сценария."""
+    counts = {"red": 0, "yellow": 0, "gray": 0}
+    for cand in candidates:
+        counts[cand.category] += 1
+    return counts
 
 
 class Review:
@@ -51,15 +60,22 @@ class Review:
 
     def candidates(self) -> list[Candidate]:
         items = [item for row in self._rows if (item := _classify(row)) is not None]
-        items.sort(key=lambda item: _PRIORITY[item.category])
+        items.sort(key=lambda item: CATEGORY_PRIORITY[item.category])
         return items
 
     def chats(self) -> list[Chat]:
         return [row["chat"] for row in self._rows]
 
-    def for_overlap(self) -> list[dict[str, Any]]:
-        """Opaque input for find_channel_overlaps. Do not read keys."""
-        return self._rows
+    def for_overlap(self) -> list[OverlapInput]:
+        """Вход find_channel_overlaps: канал с его публикациями."""
+        return [
+            OverlapInput(
+                chat=row["chat"],
+                publications=row.get("publications")
+                or group_media_publications(row.get("posts") or []),
+            )
+            for row in self._rows
+        ]
 
     def refresh(
         self,
@@ -123,7 +139,7 @@ def scan(
     channels = [
         row.chat
         for row in [*main, *archive]
-        if getattr(row, "chat", None) and row.chat.type == enums.ChatType.CHANNEL
+        if is_channel_subscription(row) and row.chat is not None
     ]
     if not channels:
         log("Каналов в подписках не найдено.")

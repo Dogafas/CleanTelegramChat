@@ -18,6 +18,7 @@ CORE = {
     "catalog",
     "chat_folder",
     "dialogs",
+    "journal",
     "overlap",
     "plan",
     "purge",

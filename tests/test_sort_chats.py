@@ -22,6 +22,7 @@ from sort_chats import (
     sortable_dialogs,
     split_assignment,
 )
+from tests.fakes import FakeUi
 
 
 def _main_only(app):
@@ -353,8 +354,8 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 categories=["Tech", "News"],
                 client=self._client(FakeApp()),
                 evaluate_fn=fake_evaluate,
-                ask=lambda *a, **k: [],  # no tabs selected
-                confirm=lambda msg: True,
+                # no tabs selected
+                ui=FakeUi(chats=lambda *a, **k: [], confirm=lambda msg: True),
                 sleep=lambda *_: None,
                 rng=lambda a, b: a,
                 log=lambda *_: None,
@@ -378,8 +379,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 categories=["Tech", "News"],
                 client=self._client(FakeApp()),
                 evaluate_fn=fake_evaluate,
-                ask=lambda *a, **k: [],
-                confirm=lambda msg: True,
+                ui=FakeUi(chats=lambda *a, **k: [], confirm=lambda msg: True),
                 sleep=lambda *_: None,
                 rng=lambda a, b: a,
                 log=lambda *_: None,
@@ -418,7 +418,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 categories=["Coding"],
                 client=self._client(FakeApp()),
                 evaluate_fn=fake_evaluate,
-                ask=lambda *a, **k: [],
+                ui=FakeUi(chats=lambda *a, **k: []),
                 sleep=lambda *_: None,
                 rng=lambda a, b: a,
                 log=lambda *_: None,
@@ -509,8 +509,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 categories=categories,
                 client=self._client(FakeApp()),
                 evaluate_fn=fake_evaluate,
-                ask=fake_ask,
-                confirm=lambda msg: True,
+                ui=FakeUi(chats=fake_ask, confirm=lambda msg: True),
                 sleep=lambda *_: None,
                 rng=lambda a, b: a,
                 log=lambda *_: None,
@@ -553,8 +552,7 @@ class SortAccountEndToEndTests(unittest.TestCase):
                 categories=["News"],
                 client=self._client(FakeApp()),
                 evaluate_fn=lambda s, q: Chat(answers={"c0": Chat(noul=0.8)}),
-                ask=lambda *a, **k: ["News"],
-                confirm=lambda msg: False,
+                ui=FakeUi(chats=lambda *a, **k: ["News"], confirm=lambda msg: False),
                 sleep=lambda *_: None,
                 rng=lambda a, b: a,
                 log=lambda *_: None,

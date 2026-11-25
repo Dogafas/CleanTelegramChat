@@ -10,8 +10,11 @@ from typing import Any
 from pyrogram.types import Message
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
-from session import TYPESAFE_KEYS, _parse_env
+from session import parse_env
 from subs import Publication
+
+# Jev/TypeSafe: ключ и опциональные endpoint/model — переживают rewrite .env
+TYPESAFE_KEYS = ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TYPESAFE_DEFAULT_MODEL")
 
 
 def load_typesafe_env(env_file: Path | None = None) -> None:
@@ -23,7 +26,7 @@ def load_typesafe_env(env_file: Path | None = None) -> None:
     if not path.is_file():
         return
 
-    for key, value in _parse_env(path.read_text(encoding="utf-8")).items():
+    for key, value in parse_env(path.read_text(encoding="utf-8")).items():
         if key in TYPESAFE_KEYS:
             _ = os.environ.setdefault(key, value)
 

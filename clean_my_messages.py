@@ -7,7 +7,7 @@ from pyrogram.types import Chat
 
 from catalog import prompt_selection
 from purge import purge_chats
-from session import prompt_sessions, restore_client_loop, telegram_client
+from session import prompt_sessions, telegram_client
 
 
 def purge_all_sessions(
@@ -28,7 +28,6 @@ def purge_all_sessions(
         try:
             with client(session_name=session_name) as app:
                 selected_chats = select(app)
-                restore_client_loop(app)
                 if selected_chats:
                     purge(app, selected_chats, sleep=sleep, log=log)
         except Exception as e:  # упавшая сессия не отменяет остальные

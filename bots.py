@@ -13,7 +13,7 @@ from typing import Any
 from pyrogram import Client, enums
 from pyrogram.types import Chat, Dialog, Message
 
-from dialogs import list_dialogs
+from dialogs import is_bot_dialog, list_dialogs
 from purge import retry_on_flood
 from review import Candidate
 from session import sync_list
@@ -175,8 +175,8 @@ def scan_bots(
     main, archive, archive_error = list_dialogs(app)
     if archive_error:
         log(f"Архив не прочитан: {archive_error}")
-    dialogs = [(row, False) for row in main if _is_bot(row)]
-    dialogs += [(row, True) for row in archive if _is_bot(row)]
+    dialogs = [(row, False) for row in main if is_bot_dialog(row)]
+    dialogs += [(row, True) for row in archive if is_bot_dialog(row)]
     if not dialogs:
         return []
 
@@ -297,8 +297,3 @@ def probe_bot(
             if not getattr(last, "outgoing", False) and last_id != getattr(sent, "id", -1):
                 return "replied"
     return "silent"
-
-
-def _is_bot(row: Dialog) -> bool:
-    chat = getattr(row, "chat", None)
-    return chat is not None and getattr(chat, "type", None) == enums.ChatType.BOT

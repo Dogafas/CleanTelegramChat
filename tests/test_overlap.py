@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace as Chat
 
 from overlap import (
+    OverlapInput,
     _match_forwards,
     _PairContext,
     build_overlap_indices,
@@ -63,8 +64,8 @@ class OverlapDetectionTests(unittest.TestCase):
         chat_b = Chat(id=102, title="Канал B", username="chan_b")
 
         channels_data = [
-            {"chat": chat_a, "publications": [p_a1, p_a2]},
-            {"chat": chat_b, "publications": [p_b1, p_b2, p_b3, p_b4]},
+            OverlapInput(chat_a, [p_a1, p_a2]),
+            OverlapInput(chat_b, [p_b1, p_b2, p_b3, p_b4]),
         ]
 
         overlaps = find_channel_overlaps(channels_data)
@@ -98,8 +99,8 @@ class OverlapDetectionTests(unittest.TestCase):
             ids_a={1}, ids_b={2}, map_a={1: p_a}, map_b={2: p_b}
         )
         _, fwd_idx, _ = build_overlap_indices([
-            {"chat": chat_a, "publications": [p_a]},
-            {"chat": chat_b, "publications": [p_b]},
+            OverlapInput(chat_a, [p_a]),
+            OverlapInput(chat_b, [p_b]),
         ])
         dup_a, dup_b, pure_fwd, shared_orig = _match_forwards(ctx, fwd_idx)
         self.assertEqual(len(pure_fwd), 1)
@@ -117,8 +118,8 @@ class OverlapDetectionTests(unittest.TestCase):
             ids_a={1}, ids_b={3}, map_a={1: p_a}, map_b={3: p_b_custom}
         )
         _, fwd_idx2, _ = build_overlap_indices([
-            {"chat": chat_a, "publications": [p_a]},
-            {"chat": chat_b, "publications": [p_b_custom]},
+            OverlapInput(chat_a, [p_a]),
+            OverlapInput(chat_b, [p_b_custom]),
         ])
         dup_a2, dup_b2, pure_fwd2, shared_orig2 = _match_forwards(ctx2, fwd_idx2)
         self.assertEqual(len(pure_fwd2), 0)
@@ -137,8 +138,8 @@ class OverlapDetectionTests(unittest.TestCase):
             id=2, date=now, text="Канал B считает новость фейком https://example.com/story1 кратко."
         )
         channels = [
-            {"chat": chat_a, "publications": [p_a]},
-            {"chat": chat_b, "publications": [p_b]},
+            OverlapInput(chat_a, [p_a]),
+            OverlapInput(chat_b, [p_b]),
         ]
         overlaps = find_channel_overlaps(channels)
         self.assertEqual(len(overlaps), 1)
@@ -157,8 +158,8 @@ class OverlapDetectionTests(unittest.TestCase):
         p_a = Publication(id=1, date=date_a, text=dup_text)
         p_b = Publication(id=2, date=date_b, text=dup_text)
         channels = [
-            {"chat": chat_a, "publications": [p_a]},
-            {"chat": chat_b, "publications": [p_b]},
+            OverlapInput(chat_a, [p_a]),
+            OverlapInput(chat_b, [p_b]),
         ]
         overlaps = find_channel_overlaps(channels)
         self.assertEqual(len(overlaps), 1)

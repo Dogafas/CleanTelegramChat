@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import Any
 
 from pyrogram import enums
@@ -7,9 +8,7 @@ from pyrogram.errors import RPCError
 from pyrogram.types import Chat, Dialog
 
 from dialogs import list_dialogs
-from ui import StyledTitle
-from ui import ask_chats as _ask
-from ui import ask_confirm as _confirm
+from ui import StyledTitle, ask_chats, ask_confirm
 
 ALL = "all"
 ALL_PUBLIC = "public"
@@ -115,8 +114,8 @@ def _build_choices(
 def select_from_dialogs(
     dialogs: Iterable[Dialog],
     *,
-    ask: Callable[[UiRows], Any] = _ask,
-    confirm: Callable[[str], Any] = _confirm,
+    ask: Callable[[UiRows], Any],
+    confirm: Callable[[str], Any],
     log: Callable[[str], None] = logging.info,
 ) -> list[Chat]:
     public, private, basic = _membership_catalog(dialogs)
@@ -162,9 +161,9 @@ def prompt_selection(
     log: Callable[[str], None] = logging.info,
 ) -> list[Chat]:
     if ask is None:
-        ask = _ask
+        ask = partial(ask_chats, app)
     if confirm is None:
-        confirm = _confirm
+        confirm = partial(ask_confirm, app)
 
     try:
         main_dialogs, archive_dialogs, archive_error = list_dialogs(app)

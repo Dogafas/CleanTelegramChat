@@ -1,10 +1,31 @@
-"""Main dialogs plus archive. Domain filters stay with callers."""
+"""Main dialogs plus archive, and domain dialog-type predicates (GLOSSARY)."""
 
-from pyrogram import Client
+from pyrogram import Client, enums
 from pyrogram.errors import RPCError
-from pyrogram.types import Dialog
+from pyrogram.types import Chat, Dialog
 
 from session import sync_list
+
+
+def is_channel_subscription(row: Dialog) -> bool:
+    """Channel Subscription (GLOSSARY): канал в подписках аккаунта."""
+    chat = getattr(row, "chat", None)
+    return chat is not None and getattr(chat, "type", None) == enums.ChatType.CHANNEL
+
+
+def is_sortable_dialog(chat: Chat) -> bool:
+    """Sortable Dialog (GLOSSARY): канал, супергруппа или обычная группа."""
+    return chat.type in (
+        enums.ChatType.CHANNEL,
+        enums.ChatType.SUPERGROUP,
+        enums.ChatType.GROUP,
+    )
+
+
+def is_bot_dialog(row: Dialog) -> bool:
+    """Бот-диалог (ADR 0011): личный чат с ботом."""
+    chat = getattr(row, "chat", None)
+    return chat is not None and getattr(chat, "type", None) == enums.ChatType.BOT
 
 
 def _chat_id(row: Dialog) -> int | None:

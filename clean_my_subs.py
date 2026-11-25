@@ -2,21 +2,19 @@
 
 import logging
 from collections.abc import Callable
-from functools import partial
 from typing import Any
 
-from pyrogram import Client
 from pyrogram.types import Chat
 
+import ui
 from catalog import chat_label
+from journal import rollback_session
 from overlap import check_duplicate_group_unsubscribes, find_channel_overlaps
-from plan import ActionPlan, apply_action_plan, rollback_session
-from review import Candidate, Review, scan
-from session import prompt_sessions, restore_client_loop, telegram_client
-from ui import StyledTitle, ask_chats, ask_confirm, ask_select, ask_text
+from plan import ActionPlan, apply_action_plan
+from review import Candidate, Review, category_counts, scan
+from session import prompt_sessions, telegram_client
+from ui import StyledTitle
 from verdict import evaluate, verdict_label
-
-_ask_unsubscribe = partial(ask_chats, message="Отметьте каналы для отписки")
 
 _LABELS = {
     "red": ("fg:ansired", "[Отписаться]"),
@@ -125,9 +123,8 @@ def _apply_selected_action_group(
     plan: ActionPlan,
     *,
     state: dict[str, Any],
-    text_fn: Callable[..., Any],
+    ui: Any,
     app: Any,
-    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if act_type == "clear":
@@ -139,8 +136,7 @@ def _apply_selected_action_group(
         state["leave_initialized"] = True
     folder_title = None
     if act_type == "folder" and selected_ids:
-        folder_title = text_fn("Введите название папки чтения:") or "Чтение"
-        restore_fn(app)
+        folder_title = ui.ask_text(app, "Введите название папки чтения:") or "Чтение"
     for candidate in candidates:
         _apply_candidate_action(
             candidate,
@@ -156,11 +152,8 @@ def _manage_action_plan(
     plan: ActionPlan,
     state: dict[str, Any] | None = None,
     *,
-    ask_chats_fn: Callable[..., Any],
-    select_fn: Callable[..., Any],
-    text_fn: Callable[..., Any],
+    ui: Any,
     app: Any,
-    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if state is None:
@@ -176,8 +169,9 @@ def _manage_action_plan(
             ("🧹 Сбросить запланированные действия для каналов", "clear"),
             ("⬅️ Назад в главное меню", "back"),
         ]
-        act_type = select_fn(f"Разбор каналов{plan_desc} — выберите действие:", actions_menu)
-        restore_fn(app)
+        act_type = ui.ask_select(
+            app, f"Разбор каналов{plan_desc} — выберите действие:", actions_menu
+        )
         if not act_type or act_type == "back":
             break
 
@@ -191,8 +185,7 @@ def _manage_action_plan(
             for c in candidates
         ]
 
-        selected = ask_chats_fn(choices)
-        restore_fn(app)
+        selected = ui.ask_chats(app, choices, message="Отметьте каналы для отписки")
         if selected is None:
             continue
 
@@ -202,15 +195,15 @@ def _manage_action_plan(
             candidates,
             plan,
             state=state,
-            text_fn=text_fn,
+            ui=ui,
             app=app,
-            restore_fn=restore_fn,
             log=log,
         )
         log(f"План обновлён: {plan.summary()}")
 def _inspect_overlaps_menu(
     overlaps: list[dict[str, Any]],
-    select_fn: Callable[..., Any],
+    ui: Any,
+    app: Any,
     log: Callable[[str], None],
 ) -> None:
     if not overlaps:
@@ -232,7 +225,7 @@ def _inspect_overlaps_menu(
         choices.append((label, idx))
     choices.append(("⬅️ Назад", -1))
 
-    choice_idx = select_fn("Выберите пару каналов для просмотра совпадений:", choices)
+    choice_idx = ui.ask_select(app, "Выберите пару каналов для просмотра совпадений:", choices)
     if choice_idx is None or choice_idx == -1:
         return
 
@@ -271,23 +264,18 @@ def _drilldown_menu(
     reviewed: Review,
     overlaps: list[dict[str, Any]],
     *,
-    ask_chats_fn: Callable[..., Any],
-    text_fn: Callable[..., Any],
+    ui: Any,
     evaluate_fn: Callable[..., Any],
-    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     channel_choices = [(chat_label(chat), chat, False) for chat in reviewed.chats()]
-    selected = ask_chats_fn(channel_choices) or []
-    restore_fn(app)
+    selected = ui.ask_chats(app, channel_choices) or []
     if not selected:
         log("Каналы для уточнения не выбраны.")
         return
 
-    days_str = text_fn("Горизонт сбора в днях (по умолчанию 14):") or "14"
-    restore_fn(app)
-    limit_str = text_fn("Предел сообщений на канал (по умолчанию 200):") or "200"
-    restore_fn(app)
+    days_str = ui.ask_text(app, "Горизонт сбора в днях (по умолчанию 14):") or "14"
+    limit_str = ui.ask_text(app, "Предел сообщений на канал (по умолчанию 200):") or "200"
     try:
         horizon_days = max(1, int(days_str))
         limit = max(10, int(limit_str))
@@ -313,9 +301,8 @@ def _review_and_apply_menu(
     plan: ActionPlan,
     overlaps: list[dict[str, Any]],
     *,
-    confirm_fn: Callable[[str], Any],
+    ui: Any,
     session_name: str,
-    restore_fn: Callable[[Client], None],
     log: Callable[[str], None],
 ) -> None:
     if plan.is_empty():
@@ -332,14 +319,11 @@ def _review_and_apply_menu(
         for warning in check_duplicate_group_unsubscribes(leave_ids, overlaps):
             log(f"⚠️ {warning}")
 
-    if not confirm_fn("Применить запланированные действия в Telegram?"):
+    if not ui.ask_confirm(app, "Применить запланированные действия в Telegram?"):
         log("Применение плана отменено пользователем.")
-        restore_fn(app)
         return
 
-    restore_fn(app)
     reports = apply_action_plan(app, plan, session_name=session_name, log=log)
-    restore_fn(app)
     applied_count = sum(1 for report in reports if report["status"] == "applied")
     log(f"Применение завершено: {applied_count} действий выполнено.")
 
@@ -348,16 +332,12 @@ def _rollback_menu(
     app: Any,
     session_name: str,
     *,
-    confirm_fn: Callable[[str], Any],
-    restore_fn: Callable[[Client], None],
+    ui: Any,
     log: Callable[[str], None],
 ) -> None:
-    if not confirm_fn(f"Откатить обратимые изменения сессии {session_name}?"):
-        restore_fn(app)
+    if not ui.ask_confirm(app, f"Откатить обратимые изменения сессии {session_name}?"):
         return
-    restore_fn(app)
     results = rollback_session(app, session_name, log=log)
-    restore_fn(app)
     restored_count = sum(1 for result in results if result["status"] == "restored")
     log(f"Откат завершён: {restored_count} параметров восстановлено.")
 
@@ -368,11 +348,7 @@ def interactive_session_loop(
     session_name: str,
     *,
     evaluate_fn: Callable[..., Any],
-    ask_chats_fn: Callable[..., Any],
-    confirm_fn: Callable[[str], Any],
-    select_fn: Callable[..., Any],
-    text_fn: Callable[..., Any],
-    restore_fn: Callable[[Client], None],
+    ui: Any,
     log: Callable[[str], None],
 ) -> None:
     plan = ActionPlan()
@@ -382,10 +358,10 @@ def interactive_session_loop(
     while True:
         candidates = reviewed.candidates()
         summary = plan.summary()
-        red_count = sum(1 for c in candidates if c.category == "red")
-        yellow_count = sum(1 for c in candidates if c.category == "yellow")
-        gray_count = sum(1 for c in candidates if c.category == "gray")
-        stats_str = f" (🔴: {red_count}, 🟡: {yellow_count}, ⚪: {gray_count})"
+        counts = category_counts(candidates)
+        stats_str = (
+            f" (🔴: {counts['red']}, 🟡: {counts['yellow']}, ⚪: {counts['gray']})"
+        )
         plan_str = f" [в плане: {summary['total_channels']}]" if summary["total_channels"] else ""
         menu = [
             (f"📋 Разбор каналов{stats_str}{plan_str}", "candidates"),
@@ -395,67 +371,36 @@ def interactive_session_loop(
             ("↩️ Вернуть как было (отменить прошлые действия)", "rollback"),
             ("🚪 Завершить работу с сессией", "exit"),
         ]
-        choice = select_fn(f"Сессия {session_name} — выберите раздел:", menu)
-        restore_fn(app)
+        choice = ui.ask_select(app, f"Сессия {session_name} — выберите раздел:", menu)
         if not choice or choice == "exit":
             log("Завершение работы с сессией.")
             break
         if choice == "candidates":
-            _manage_action_plan(
-                candidates,
-                plan,
-                session_state,
-                ask_chats_fn=ask_chats_fn,
-                select_fn=select_fn,
-                text_fn=text_fn,
-                app=app,
-                restore_fn=restore_fn,
-                log=log,
-            )
+            _manage_action_plan(candidates, plan, session_state, ui=ui, app=app, log=log)
         elif choice == "overlaps":
-            _inspect_overlaps_menu(overlaps, select_fn, log)
+            _inspect_overlaps_menu(overlaps, ui, app, log)
         elif choice == "drilldown":
             _drilldown_menu(
                 app,
                 reviewed,
                 overlaps,
-                ask_chats_fn=ask_chats_fn,
-                text_fn=text_fn,
+                ui=ui,
                 evaluate_fn=evaluate_fn,
-                restore_fn=restore_fn,
                 log=log,
             )
         elif choice == "apply":
-            _review_and_apply_menu(
-                app,
-                plan,
-                overlaps,
-                confirm_fn=confirm_fn,
-                session_name=session_name,
-                restore_fn=restore_fn,
-                log=log,
-            )
+            _review_and_apply_menu(app, plan, overlaps, ui=ui, session_name=session_name, log=log)
         elif choice == "rollback":
-            _rollback_menu(
-                app,
-                session_name,
-                confirm_fn=confirm_fn,
-                restore_fn=restore_fn,
-                log=log,
-            )
+            _rollback_menu(app, session_name, ui=ui, log=log)
 
 
 def clean_subscriptions(
     sessions: list[str],
     *,
     client: Callable[..., Any] = telegram_client,
-    restore: Callable[[Client], None] = restore_client_loop,
+    ui: Any = ui,
     evaluate_fn: Callable[..., Any] = evaluate,
-    ask: Callable[[list[Any]], Any] = _ask_unsubscribe,
-    confirm: Callable[[str], Any] = ask_confirm,
     log: Callable[[str], None] = logging.info,
-    select_fn: Callable[..., Any] = ask_select,
-    text_fn: Callable[..., Any] = ask_text,
 ) -> None:
     if not sessions:
         log("Сессии не выбраны. Завершение работы.")
@@ -474,11 +419,7 @@ def clean_subscriptions(
                     reviewed,
                     session_name,
                     evaluate_fn=evaluate_fn,
-                    ask_chats_fn=ask,
-                    confirm_fn=confirm,
-                    select_fn=select_fn,
-                    text_fn=text_fn,
-                    restore_fn=restore,
+                    ui=ui,
                     log=log,
                 )
         except Exception:

@@ -12,16 +12,10 @@ from pyrogram.errors import FloodWait
 
 from bots import BotInfo, bot_signals, classify, probe_bot, scan_bots
 from clean_my_bots import bot_row, ordered, probe_menu
-from plan import (
-    FOREVER_MUTE,
-    ActionPlan,
-    BotAction,
-    apply_action_plan,
-    apply_bot_actions,
-    load_rollback_journal,
-    rollback_session,
-)
+from journal import FOREVER_MUTE, load_rollback_journal, rollback_session
+from plan import ActionPlan, BotAction, apply_action_plan, apply_bot_actions
 from review import Candidate
+from tests.fakes import FakeUi
 
 
 def must(cand: Candidate | None) -> Candidate:
@@ -388,9 +382,7 @@ class ScenarioOrderTests(unittest.TestCase):
         probe_menu(
             app,
             infos,
-            restore=lambda a: None,
-            ask=lambda choices, message: [],
-            confirm=lambda m: False,
+            ui=FakeUi(chats=lambda choices, message: [], confirm=lambda m: False),
             probe_fn=fake_probe,
             log=lambda m: None,
         )
@@ -405,9 +397,7 @@ class ScenarioOrderTests(unittest.TestCase):
         probe_menu(
             app,
             infos,
-            restore=lambda a: None,
-            ask=fake_ask,
-            confirm=lambda m: True,
+            ui=FakeUi(chats=fake_ask, confirm=lambda m: True),
             probe_fn=fake_probe,
             log=lambda m: None,
         )
