@@ -61,18 +61,28 @@ class LayerTests(unittest.TestCase):
             others = _imported_roots(path) & (CLI - {path.stem})
             self.assertEqual(others, set(), f"{path.name} импортирует сценарий {sorted(others)}")
 
+    # Инлайновые подавления запрещены так же, как noqa; исключения — с обоснованием.
+    # session.py sync_list: kurigram заявляет AsyncGenerator, в рантайме sync-генератор.
+    ALLOWED_SUPPRESSIONS = frozenset({("session.py", "return list(agen)")})
+
     def test_sources_have_no_linter_ignores(self):
         offenders = []
         for path in sorted(ROOT.glob("*.py")):
             for lineno, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1
             ):
-                if "noqa" in line or "type: ignore" in line:
+                suppressed = (
+                    "noqa" in line or "type: ignore" in line or "pyright: ignore" in line
+                )
+                if suppressed and not any(
+                    path.name == name and needle in line
+                    for name, needle in self.ALLOWED_SUPPRESSIONS
+                ):
                     offenders.append(f"{path.name}:{lineno}")
         self.assertEqual(
             offenders,
             [],
-            "правь код, а не глуши линтер; подавления — только в pyproject с обоснованием",
+            "правь код, а не глуши линтер; подавления — только в pyproject и ALLOWED_SUPPRESSIONS",
         )
 
     def test_no_circular_imports(self):

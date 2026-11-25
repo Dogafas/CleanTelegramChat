@@ -11,7 +11,7 @@ from pyrogram import enums
 from pyrogram.errors import FloodWait
 
 from bots import BotInfo, bot_signals, classify, probe_bot, scan_bots
-from clean_my_bots import _bot_row, _ordered, _probe_menu
+from clean_my_bots import bot_row, ordered, probe_menu
 from plan import (
     FOREVER_MUTE,
     ActionPlan,
@@ -367,10 +367,10 @@ class ScenarioOrderTests(unittest.TestCase):
         yellow = make_info(chat_id=2, signals=["молчит ≥ 3 мес."])
         gray = make_info(chat_id=3, error="x")
         red = make_info(chat_id=4, deleted=True)
-        ordered = _ordered([healthy, yellow, gray, red])
-        self.assertEqual([info.dialog.chat.id for info, _ in ordered], [4, 2, 3, 1])
+        rows = ordered([healthy, yellow, gray, red])
+        self.assertEqual([info.dialog.chat.id for info, _ in rows], [4, 2, 3, 1])
         # RED предотмечен в чекбоксе, остальные нет
-        checks = {row[1]: row[2] for row in (_bot_row(i, c) for i, c in ordered)}
+        checks = {row[1]: row[2] for row in (bot_row(i, c) for i, c in rows)}
         self.assertTrue(checks[4])
         self.assertFalse(checks[2])
         self.assertFalse(checks[3])
@@ -385,7 +385,7 @@ class ScenarioOrderTests(unittest.TestCase):
             calls["probe"] += 1
             return "silent"
 
-        _probe_menu(
+        probe_menu(
             app,
             infos,
             restore=lambda a: None,
@@ -402,7 +402,7 @@ class ScenarioOrderTests(unittest.TestCase):
             confirmed.append(message)
             return [9]
 
-        _probe_menu(
+        probe_menu(
             app,
             infos,
             restore=lambda a: None,

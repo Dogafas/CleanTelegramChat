@@ -20,7 +20,7 @@ _LABELS = {
 _PRIORITY = {"red": 0, "yellow": 1, "gray": 2}
 
 
-def _bot_row(info: BotInfo, candidate: Candidate | None) -> tuple[StyledTitle, int, bool]:
+def bot_row(info: BotInfo, candidate: Candidate | None) -> tuple[StyledTitle, int, bool]:
     """Строка чекбокса: (title, chat_id, checked)."""
     parts = [bot_label(info.dialog.chat)]
     if info.archived:
@@ -37,7 +37,7 @@ def _bot_row(info: BotInfo, candidate: Candidate | None) -> tuple[StyledTitle, i
     return (StyledTitle(tokens), info.chat_id, checked)
 
 
-def _ordered(infos: list[BotInfo]) -> list[tuple[BotInfo, Candidate | None]]:
+def ordered(infos: list[BotInfo]) -> list[tuple[BotInfo, Candidate | None]]:
     """Кандидаты RED → YELLOW → GRAY, затем боты без признаков."""
     rows = [(info, classify(info)) for info in infos]
     rows.sort(key=lambda row: _PRIORITY.get(row[1].category, 3) if row[1] else 3)
@@ -49,7 +49,7 @@ def _select_bot_ids(
     message: str,
     ask: Callable[..., Any],
 ) -> set[int]:
-    choices = [_bot_row(info, candidate) for info, candidate in rows]
+    choices = [bot_row(info, candidate) for info, candidate in rows]
     return set(ask(choices, message=message) or [])
 
 
@@ -70,7 +70,7 @@ def _build_actions(
     return actions
 
 
-def _probe_menu(
+def probe_menu(
     app: Client,
     infos: list[BotInfo],
     *,
@@ -87,7 +87,7 @@ def _probe_menu(
         return
     rows = [(info, classify(info)) for info in infos]
     choices = [
-        (_bot_row(info, candidate)[0], info.chat_id, False)
+        (bot_row(info, candidate)[0], info.chat_id, False)
         for info, candidate in rows
     ]
     selected = set(ask(choices, message="Отметьте ботов для пробы /start") or [])
@@ -119,9 +119,9 @@ def _bot_session(
     probe_fn: Callable[..., str] = probe_bot,
     log: Callable[[str], None],
 ) -> None:
-    _probe_menu(app, infos, restore=restore, ask=ask, confirm=confirm, probe_fn=probe_fn, log=log)
+    probe_menu(app, infos, restore=restore, ask=ask, confirm=confirm, probe_fn=probe_fn, log=log)
 
-    rows = _ordered(infos)
+    rows = ordered(infos)
     reds = sum(1 for _, c in rows if c is not None and c.category == "red")
     yellows = sum(1 for _, c in rows if c is not None and c.category == "yellow")
     grays = sum(1 for _, c in rows if c is not None and c.category == "gray")

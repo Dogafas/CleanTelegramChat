@@ -72,8 +72,8 @@ def _is_ad(m: Message) -> bool:
     text = str(getattr(m, "text", None) or getattr(m, "caption", None) or "")
     if AD_MARKERS.search(text):
         return True
-    entities = getattr(m, "entities", None) or []
-    entities += getattr(m, "caption_entities", None) or []
+    entities = list(getattr(m, "entities", None) or [])
+    entities += list(getattr(m, "caption_entities", None) or [])
     return any(getattr(e, "type", None) in AD_ENTITY_TYPES for e in entities)
 
 

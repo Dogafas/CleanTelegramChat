@@ -597,6 +597,7 @@ def rollback_session(
     selected = [r for r in records if actions is None or r.get("action") in actions]
     kept = [r for r in records if not (actions is None or r.get("action") in actions)]
     if not selected:
+        log(f"Для сессии {session_name} нет записей выбранных действий: {sorted(actions or [])}.")
         return []
 
     results: list[dict[str, Any]] = []

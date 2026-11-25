@@ -18,8 +18,11 @@ _FLOOD_FALLBACK = 5  # сервер прислал нечисловой value �
 
 def flood_delay(e: FloodWait, rng: Callable[..., float] = random.uniform) -> float:
     """Задержка FloodWait: секунды сервера + джиттер."""
-    value = e.value if isinstance(e.value, (int, str)) else _FLOOD_FALLBACK
-    return int(value) + rng(*FLOOD_JITTER)
+    try:
+        value = int(e.value) if e.value is not None else _FLOOD_FALLBACK
+    except (TypeError, ValueError):
+        value = _FLOOD_FALLBACK
+    return value + rng(*FLOOD_JITTER)
 
 
 def retry_on_flood[T](

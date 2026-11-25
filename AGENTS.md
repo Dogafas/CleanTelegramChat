@@ -22,7 +22,7 @@ Entry points: `clean_my_messages.py`, `clean_my_subs.py`, `clean_my_bots.py`, `s
 
 Done means all five commands above (after `uv sync`) are green. Hook: `.githooks/pre-commit`. Fresh clone: `git config core.hooksPath .githooks`.
 
-Гейты `tests/test_layers.py`: слои CLI/ядро, отсутствие циклов импортов, отсутствие `noqa`/`type: ignore`. Подавления — только в конфигах ruff/pyright (`per-file-ignores`, `pyrightconfig.json`) с обоснованием. `typing.cast` и `unittest.mock` запрещены в коде (TID251); фейки — только в тестах, через швы `ui`/client-фабрик. kurigram-итераторы (`get_dialogs`, `get_chat_history`, `search_messages`) — только через `session.sync_list`.
+Гейты `tests/test_layers.py`: слои CLI/ядро, отсутствие циклов импортов, отсутствие `noqa`/`type: ignore`/`pyright: ignore`. Подавления — только в конфигах ruff/pyright (`per-file-ignores`, `pyrightconfig.json`) с обоснованием; единственное инлайновое исключение — `sync_list` в `session.py`, закреплено в `ALLOWED_SUPPRESSIONS` гейта. `typing.cast` и `unittest.mock` запрещены в коде (TID251); фейки — только в тестах, через швы `ui`/client-фабрик. kurigram-итераторы (`get_dialogs`, `get_chat_history`, `search_messages`) — только через `session.sync_list`.
 
 `Any` разрешён ровно в двух местах: (1) `app`-параметры и DI-фабрики клиента — kurigram в аннотациях заявляет `async`, а в рантайме его методы sync (`pyrogram/sync.py`), честных статических типов у него нет; (2) `dict[str, Any]` для внешних JSON-полезных грузов (журнал отката, coverage, вердикт Jev). Везде остальное — типы из `pyrogram.types` (`Message`, `Chat`, `Dialog`) и доменные (`Publication`, `Candidate`).
 
