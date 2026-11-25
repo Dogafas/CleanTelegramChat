@@ -4,7 +4,7 @@ import os
 from collections.abc import AsyncGenerator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from pyrogram import Client
 
@@ -12,7 +12,6 @@ from ui import ask_confirm as _ask_confirm
 from ui import ask_select as _ask_select
 from ui import ask_text as _ask_text
 
-_T = TypeVar("_T")
 
 
 def sync_list(agen: AsyncGenerator[_T, None]) -> list[_T]:

@@ -2,14 +2,12 @@
 
 import random
 from collections.abc import Callable, Iterable
-from typing import Any, TypeVar
+from typing import Any
 
 from pyrogram.errors import FloodWait, RPCError
 from pyrogram.types import Chat
 
 from session import sync_list
-
-_T = TypeVar("_T")
 
 BATCH_LIMIT = 100
 BATCH_PAUSE = (8.0, 25.0)
@@ -25,14 +23,14 @@ def flood_delay(e: FloodWait, rng: Callable[..., float] = random.uniform) -> flo
 
 
 def retry_on_flood(
-    op: Callable[[], _T],
+    op: Callable[[], T],
     *,
     sleep: Callable[[float], None] | None = None,
     rng: Callable[..., float] = random.uniform,
     max_attempts: int = 5,
     log: Callable[[str], None] = print,
     what: str = "",
-) -> tuple[_T | None, Exception | None]:
+) -> tuple[T | None, Exception | None]:
     """Выполнить op() с повтором при FloodWait.
 
     Возвращает (value, error):

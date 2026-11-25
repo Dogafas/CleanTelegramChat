@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Python 3.10–3.12, `uv`
+- Python 3.14, `uv`
 - Kurigram, questionary, typesafe-sdk (Jev)
 
 ## Commands

@@ -2,9 +2,9 @@
 name = "clean-telegram-chat"
 version = "0.1.0"
 description = "Delete your own messages from Telegram supergroups"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.14"
 dependencies = [
-    "kurigram>=2.2.26",
+    "kurigram[fast]>=2.2.26",
     "questionary>=2.1.1",
     "typesafe-sdk>=0.7",
 ]
@@ -29,7 +29,7 @@ ignore_names = ["from_user", "revoke", "offset_id", "exc_type", "exc_val", "exc_
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py314"
 
 [tool.ruff.lint]
 allowed-confusables = ["с", "а", "е", "о", "р", "х", "у", "г", "б", "д", "в", "к", "м", "н", "п", "т", "ф", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "А", "В", "Е", "К", "М", "Н", "О", "Р", "С", "Т", "У", "Х"]  # кириллица в русских строках/комментариях
