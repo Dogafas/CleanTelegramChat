@@ -24,6 +24,11 @@ def sync_list(agen: AsyncGenerator[_T, None]) -> list[_T]:
     """
     return list(agen)  # pyright: ignore[reportArgumentType] — единственное подавление, см. докстринг
 
+# ponytail: kurigram info/warning-поток (PingTask, Waiting for N seconds, Retrying) —
+# шум в консоли; реальные сбои проходят через retry_on_flood и logging.exception.
+# Вернуть INFO на pyrogram, если понадобится трассировка соединения.
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
+
 ENV_ID = "TELEGRAM_API_ID"
 ENV_HASH = "TELEGRAM_API_HASH"
 SESSION_NAME = "cleaner"

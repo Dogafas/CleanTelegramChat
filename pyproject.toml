@@ -14,6 +14,7 @@ package = false
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.40.2",
     "deptry>=0.25.1",
     "ruff>=0.6",
     "vulture>=2.16",
