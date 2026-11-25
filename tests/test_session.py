@@ -540,7 +540,7 @@ class TelegramClientTests(unittest.TestCase):
                 self.args = args
                 self.kwargs = kwargs
 
-            def __enter__(self) -> "DummyRecordingClient":
+            def __enter__(self) -> DummyRecordingClient:
                 return self
 
             def __exit__(self, *args: Any) -> None:
@@ -572,7 +572,7 @@ class TelegramClientTests(unittest.TestCase):
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.dispatcher_loop = asyncio.get_event_loop()
 
-            def __enter__(self) -> "NoopClient":
+            def __enter__(self) -> NoopClient:
                 return self
 
             def __exit__(self, *args: Any) -> None:
@@ -601,6 +601,38 @@ class TelegramClientTests(unittest.TestCase):
             # восстановлен
             restored = asyncio.get_event_loop()
             self.assertFalse(restored.is_closed())
+        finally:
+            asyncio.set_event_loop(old_loop)
+
+    def test_syncs_loop_before_client_exit(self):
+        class LoopAssertingClient:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.init_loop = asyncio.get_event_loop()
+
+            def __enter__(self) -> LoopAssertingClient:
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                # Pyrogram Client.stop(): собирает задачи диспетчера на текущем loop
+                self.exit_loop = asyncio.get_event_loop()
+
+        env = {"TELEGRAM_API_ID": "1", "TELEGRAM_API_HASH": "h"}
+        old_loop = asyncio.get_event_loop()
+        try:
+            with telegram_client(
+                session_name="s",
+                workdir=self.tmp_path,
+                client_factory=LoopAssertingClient,
+                environ=env,
+            ) as app:
+                # Симулируем последний questionary-диалог: asyncio.run() закрыл
+                # свой loop и оставил его thread loop-ом
+                stolen = asyncio.new_event_loop()
+                stolen.close()
+                asyncio.set_event_loop(stolen)
+            # stop() в __exit__ должен выполняться на loop клиента, не на «stolen»
+            self.assertIs(app.exit_loop, app.init_loop)
+            self.assertFalse(asyncio.get_event_loop().is_closed())
         finally:
             asyncio.set_event_loop(old_loop)
 

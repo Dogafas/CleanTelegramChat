@@ -13,8 +13,7 @@ from ui import ask_select as _ask_select
 from ui import ask_text as _ask_text
 
 
-
-def sync_list(agen: AsyncGenerator[_T, None]) -> list[_T]:
+def sync_list[T](agen: AsyncGenerator[T]) -> list[T]:
     """list() для kurigram-итераторов (get_dialogs, get_chat_history).
 
     Аннотации kurigram врут: в рантайме его методы sync — pyrogram/sync.py
@@ -334,6 +333,9 @@ def telegram_client(
         logging.info(
             f"Соединение с Telegram через прокси {proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
         )
+    def _sync_loop() -> None:
+        asyncio.set_event_loop(asyncio.new_event_loop() if loop.is_closed() else loop)
+
     try:
         with client_factory(
             session_name,
@@ -342,9 +344,12 @@ def telegram_client(
             proxy=proxy,
             workdir=target_workdir,
         ) as app:
-            yield app
+            try:
+                yield app
+            finally:
+                # Вернуть loop клиента ДО app.stop() в __exit__: после последнего
+                # questionary-диалога thread loop — закрытый loop asyncio.run(),
+                # и gather задач диспетчера падает с «attached to a different loop».
+                _sync_loop()
     finally:
-        if loop.is_closed():
-            asyncio.set_event_loop(asyncio.new_event_loop())
-        else:
-            asyncio.set_event_loop(loop)
+        _sync_loop()
