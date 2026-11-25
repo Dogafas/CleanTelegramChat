@@ -274,9 +274,8 @@ def _attach(scan: ChannelScan, evaluate: Callable[..., Any], log: Callable[[str]
         scan.verdict = {"error": "некорректный ответ модели"}
         return
     scan.verdict = verdict
-    if isinstance(verdict, dict):
-        scan.coverage["model_texts_count"] = verdict.get("model_texts_count", 0)
-        scan.coverage["truncated_texts_count"] = verdict.get("truncated_texts_count", 0)
+    scan.coverage["model_texts_count"] = verdict.get("model_texts_count", 0)
+    scan.coverage["truncated_texts_count"] = verdict.get("truncated_texts_count", 0)
 
 
 def _classify(scan: ChannelScan) -> Candidate | None:

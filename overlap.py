@@ -233,8 +233,11 @@ def _match_urls(
 
 
 def _compare_channel_pair(
+    id_a: int,
+    id_b: int,
     row_a: OverlapInput,
     row_b: OverlapInput,
+    *,
     text_idx: dict[str, set[tuple[int, int]]],
     fwd_idx: dict[tuple[int, int], set[tuple[int, int]]],
     url_idx: dict[str, set[tuple[int, int]]],
@@ -242,13 +245,6 @@ def _compare_channel_pair(
     """Сравнение пары каналов в границах общего временного окна (Section 2)."""
     chat_a = row_a.chat
     chat_b = row_b.chat
-    id_a, id_b = chat_a.id, chat_b.id
-    if id_a is None or id_b is None:
-        return {
-            "chat_a": chat_a, "chat_b": chat_b, "has_comparable_window": False,
-            "status": "incomparable_windows", "reason": "канал без id",
-            "overlap_rate_a": 0.0, "overlap_rate_b": 0.0,
-        }
 
     dates_a = [_to_utc_dt(p.date) for p in row_a.publications if getattr(p, "date", None)]
     dates_a = [d for d in dates_a if d is not None]
@@ -361,7 +357,15 @@ def find_channel_overlaps(
     for id_a, id_b in sorted(candidate_pairs):
         row_a = by_chat_id[id_a]
         row_b = by_chat_id[id_b]
-        res = _compare_channel_pair(row_a, row_b, text_idx, fwd_idx, url_idx)
+        res = _compare_channel_pair(
+            id_a,
+            id_b,
+            row_a,
+            row_b,
+            text_idx=text_idx,
+            fwd_idx=fwd_idx,
+            url_idx=url_idx,
+        )
         overlap_results.append(res)
 
     return overlap_results
