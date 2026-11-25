@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import sleep as default_sleep
-from typing import Any, Callable
+from typing import Any
 
 from pyrogram import Client, enums
 from pyrogram.types import Chat, Dialog, Message
@@ -64,7 +65,7 @@ def bot_name(chat: Chat) -> str:
 
 
 def _to_utc(val: datetime) -> datetime:
-    return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    return val if val.tzinfo else val.replace(tzinfo=UTC)
 
 
 def _is_ad(m: Message) -> bool:
@@ -90,7 +91,7 @@ def ad_share(messages: list[Message]) -> float:
 
 def bot_signals(messages: list[Message], *, now: datetime | None = None) -> list[str]:
     """Фиксированные сигналы ADR 0011 §3 по полной истории (новейшие первыми)."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     signals: list[str] = []
 
     last_date = getattr(messages[0], "date", None) if messages else None

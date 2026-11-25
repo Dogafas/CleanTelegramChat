@@ -22,7 +22,7 @@ def flood_delay(e: FloodWait, rng: Callable[..., float] = random.uniform) -> flo
     return int(value) + rng(*FLOOD_JITTER)
 
 
-def retry_on_flood(
+def retry_on_flood[T](
     op: Callable[[], T],
     *,
     sleep: Callable[[float], None] | None = None,

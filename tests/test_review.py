@@ -1,7 +1,7 @@
 """Review seam: routing, archive inclusion, refresh, coverage log."""
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace as Chat
 from unittest import mock
 
@@ -26,7 +26,7 @@ def _post(text="мысли о жизни", *, day=1, views=100, media_group_id=N
         id=day,
         text=text,
         caption=None,
-        date=datetime(2026, 10, day, tzinfo=timezone.utc),
+        date=datetime(2026, 10, day, tzinfo=UTC),
         views=views,
         reactions=None,
         forwards=0,
@@ -196,7 +196,7 @@ class ReviewRoutingTests(unittest.TestCase):
         self.assertEqual([chat.id for chat in reviewed.chats()], [1])
 
     def test_album_is_one_publication_in_the_log(self):
-        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, tzinfo=UTC)
         posts = [
             Chat(id=i, text="подпись" if i == 1 else "", caption=None, date=now, views=10,
                  reactions=None, forwards=0, media_group_id="mg")
@@ -235,7 +235,7 @@ class ReviewRoutingTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("Уточнено:") for line in logs))
 
     def test_frequency_uses_full_history_not_the_model_sample(self):
-        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, tzinfo=UTC)
         posts = [
             Chat(
                 id=i,

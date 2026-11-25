@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import sleep as default_sleep
-from typing import Any, Callable
+from typing import Any
 
 from pyrogram import enums
 from pyrogram.types import Chat, Message
@@ -130,7 +131,7 @@ def scan(
 
     log(f"Найдено каналов: {len(channels)}. Сбор метрик по последним постам…")
     rows: list[dict[str, Any]] = []
-    scan_start = datetime.now(timezone.utc)
+    scan_start = datetime.now(UTC)
     for i, chat in enumerate(channels):
         if i:
             sleep(rng(*ANALYSIS_PAUSE))

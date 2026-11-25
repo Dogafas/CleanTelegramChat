@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from pyrogram import raw
 
@@ -149,7 +150,7 @@ def _write_journal(path: Path, session_name: str, records: list[dict[str, Any]])
     """Атомарная замена файла журнала: tmp + replace, краш не оставляет битый json."""
     data = {
         "session_name": session_name,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "records": records,
     }
     tmp = path.with_suffix(".json.tmp")

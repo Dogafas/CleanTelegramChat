@@ -1,7 +1,7 @@
 """Unit tests for exact channel overlap analysis (Section 2)."""
 
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace as Chat
 
 from overlap import (
@@ -49,7 +49,7 @@ class OverlapNormalizationTests(unittest.TestCase):
 
 class OverlapDetectionTests(unittest.TestCase):
     def test_exact_text_duplicate_found_and_asymmetric(self):
-        now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
         dup_text = "Подробный аналитический разбор ситуации на рынке за октябрь с цифрами."
 
         p_a1 = Publication(id=1, date=now, text=dup_text)
@@ -80,7 +80,7 @@ class OverlapDetectionTests(unittest.TestCase):
         self.assertEqual(res["unmatched_b"], 3)
 
     def test_pure_forward_vs_shared_origin(self):
-        now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
         chat_a = Chat(id=1, title="A", username="a")
         chat_b = Chat(id=2, title="B", username="b")
 
@@ -127,7 +127,7 @@ class OverlapDetectionTests(unittest.TestCase):
         self.assertEqual(len(dup_b2), 0)
 
     def test_shared_url_with_different_text_not_counted_as_text_duplicate(self):
-        now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
         chat_a = Chat(id=1, title="A", username="a")
         chat_b = Chat(id=2, title="B", username="b")
         p_a = Publication(
@@ -149,8 +149,8 @@ class OverlapDetectionTests(unittest.TestCase):
         self.assertEqual(len(res["shared_urls"]), 1)
 
     def test_incomparable_windows_reported(self):
-        date_a = datetime(2026, 9, 1, tzinfo=timezone.utc)
-        date_b = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        date_a = datetime(2026, 9, 1, tzinfo=UTC)
+        date_b = datetime(2026, 10, 20, tzinfo=UTC)
         chat_a = Chat(id=1, title="A", username="a")
         chat_b = Chat(id=2, title="B", username="b")
         dup_text = "Одинаковый текст новости, опубликованный с разницей в два месяца."

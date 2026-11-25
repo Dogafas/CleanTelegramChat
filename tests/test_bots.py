@@ -2,7 +2,7 @@
 
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -29,7 +29,7 @@ def must(cand: Candidate | None) -> Candidate:
     assert cand is not None
     return cand
 
-_NOW = datetime(2026, 11, 23, tzinfo=timezone.utc)
+_NOW = datetime(2026, 11, 23, tzinfo=UTC)
 
 
 def NO_SLEEP(_seconds: float) -> None:

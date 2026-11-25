@@ -4,7 +4,7 @@ import random
 import re
 import statistics
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pyrogram.types import Chat, Message
@@ -58,7 +58,7 @@ def fetch_creation_date(app: Any, chat_id: int) -> datetime | None:
 
 def _to_utc_dt(val: datetime | None) -> datetime | None:
     if isinstance(val, datetime):
-        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+        return val if val.tzinfo else val.replace(tzinfo=UTC)
     return None
 
 
@@ -173,7 +173,7 @@ def compute_coverage(
     error: str | None = None,
 ) -> dict[str, Any]:
     """Сведения о покрытии выборки канала (Section 1)."""
-    scan_dt = _to_utc_dt(scan_started_at) or datetime.now(timezone.utc)
+    scan_dt = _to_utc_dt(scan_started_at) or datetime.now(UTC)
     pubs = publications if publications is not None else group_media_publications(messages)
 
     dates_raw = [getattr(m, "date", None) for m in messages if getattr(m, "date", None)]
@@ -290,7 +290,7 @@ def compute_metrics(
     c_dt = _to_utc_dt(created_at)
     if c_dt:
         valid_dates = [d for m in pubs if (d := _to_utc_dt(m.date)) is not None]
-        ref_dt = max((d for d in valid_dates if d), default=None) or datetime.now(timezone.utc)
+        ref_dt = max((d for d in valid_dates if d), default=None) or datetime.now(UTC)
         diff_sec = max((ref_dt - c_dt).total_seconds(), 0.0)
         age_days = round(diff_sec / 86400.0, 1)
         age_months = max(age_days / 30.44, 0.1)
@@ -418,7 +418,7 @@ def refine_channel_history(
 ) -> tuple[list[Message], list[Publication], dict[str, Any]]:
     """Уточняющий сбор расширенной истории по выбранному каналу (Section 4)."""
     # ponytail: добираем сообщения вглубь истории без сдвига снимка новыми постами
-    scan_dt = _to_utc_dt(scan_started_at) or datetime.now(timezone.utc)
+    scan_dt = _to_utc_dt(scan_started_at) or datetime.now(UTC)
     horizon_dt = scan_dt - timedelta(days=horizon_days)
 
     by_id: dict[int, Message] = {

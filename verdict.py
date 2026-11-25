@@ -3,7 +3,7 @@
 import math
 import os
 from collections.abc import Callable, Sequence
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +76,7 @@ QUESTIONS: dict[str, Any] = {
 
 
 
-class VerdictStatus(str, Enum):
+class VerdictStatus(StrEnum):
     """Программный статус вердикта: причина gray-категории без парсинга строк."""
 
     NO_TEXT = "no_text"
