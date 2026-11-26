@@ -1,17 +1,42 @@
 import asyncio
-import json
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from pyrogram import Client
 
-from ui import ask_confirm as _ask_confirm
-from ui import ask_select as _ask_select
-from ui import ask_text as _ask_text
+from ui import ask_confirm, ask_select, ask_text
+
+
+def _ask_select(message: str, choices: list[tuple[str, str]]) -> str | None:
+    # Меню выбора сессии идёт до подключения клиента — восстанавливать нечего.
+    return ask_select(None, message, choices)
+
+
+def _ask_text(message: str) -> str | None:
+    return ask_text(None, message)
+
+
+def _ask_confirm(message: str, default: bool = False) -> bool:
+    return ask_confirm(None, message, default=default)
+
+
+def sync_list[T](agen: AsyncGenerator[T]) -> list[T]:
+    """list() для kurigram-итераторов (get_dialogs, get_chat_history).
+
+    Аннотации kurigram врут: в рантайме его методы sync — pyrogram/sync.py
+    оборачивает их при сборке класса, и get_dialogs() возвращает обычный
+    генератор. Статический тип оставлен как объявлен в kurigram.
+    """
+    return list(agen)  # pyright: ignore[reportArgumentType] — единственное подавление, см. докстринг
+
+# ponytail: kurigram info/warning-поток (PingTask, Waiting for N seconds, Retrying) —
+# шум в консоли; реальные сбои проходят через retry_on_flood и logging.exception.
+# Вернуть INFO на pyrogram, если понадобится трассировка соединения.
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
 ENV_ID = "TELEGRAM_API_ID"
 ENV_HASH = "TELEGRAM_API_HASH"
@@ -25,7 +50,7 @@ PROXY_SCHEME = "TELEGRAM_PROXY_SCHEME"
 PROXY_HOSTNAME = "TELEGRAM_PROXY_HOSTNAME"
 PROXY_PORT = "TELEGRAM_PROXY_PORT"
 PROXY_USERNAME = "TELEGRAM_PROXY_USERNAME"
-PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"  # noqa: S105
+PROXY_PASSWORD = "TELEGRAM_PROXY_PASSWORD"
 PROXY_KEYS = (PROXY_SCHEME, PROXY_HOSTNAME, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD)
 PROXY_SCHEMES = ("socks5", "socks4", "http")
 _MAX_PORT = 65535
@@ -34,9 +59,6 @@ _MAX_PORT = 65535
 def env_path() -> Path:
     return Path(__file__).resolve().parent / ".env"
 
-
-def cache_path() -> Path:
-    return Path(__file__).resolve().parent / "cache.json"
 
 
 def sessions_dir(root: Path | None = None) -> Path:
@@ -61,7 +83,7 @@ def migrate_legacy_sessions(root: Path | None = None) -> list[str]:
 
 
 def list_sessions(root: Path | None = None) -> list[str]:
-    migrate_legacy_sessions(root)
+    migrate_legacy_sessions(root)  # разовая миграция *.session из корня в sessions/
     dest = sessions_dir(root)
     return sorted(p.stem for p in dest.glob("*.session") if p.is_file())
 
@@ -118,6 +140,7 @@ def _handle_delete_session(
 def prompt_sessions(
     root: Path | None = None,
     *,
+    allow_all: bool = True,
     ask_select: Callable[..., Any] = _ask_select,
     ask_text: Callable[..., Any] = _ask_text,
     ask_confirm: Callable[..., Any] = _ask_confirm,
@@ -128,9 +151,9 @@ def prompt_sessions(
             name = _prompt_new_session(ask_text, existing)
             return [name] if name else []
 
-        choices: list[Any] = []
-        if len(existing) > 1:
-            choices.append(("Все сессии", ALL_SESSIONS))  # noqa: RUF001
+        choices: list[tuple[str, str]] = []
+        if allow_all and len(existing) > 1:
+            choices.append(("Все сессии", ALL_SESSIONS))
         for s in existing:
             choices.append((s, s))
         choices.append(("+ Создать новую сессию", CREATE_SESSION))
@@ -150,7 +173,8 @@ def prompt_sessions(
         elif choice == DELETE_SESSION:
             _handle_delete_session(root, existing, ask_select, ask_confirm)
 
-def _parse_env(content: str) -> dict[str, str]:
+def parse_env(content: str) -> dict[str, str]:
+    """Все валидные KEY=value строки .env; специальные ключи знают их владельцы."""
     data: dict[str, str] = {}
     for line in content.splitlines():
         trimmed = line.strip()
@@ -166,7 +190,7 @@ def _parse_env(content: str) -> dict[str, str]:
             and v not in ('"', "'")
         ):
             v = v[1:-1]
-        if k in (ENV_ID, ENV_HASH, *PROXY_KEYS):
+        if k:
             data[k] = v
     return data
 
@@ -174,13 +198,13 @@ def _parse_env(content: str) -> dict[str, str]:
 def _write_env(path: Path, api_id: int, api_hash: str) -> None:
     existing_data: dict[str, str] = {}
     if path.is_file():
-        existing_data = _parse_env(path.read_text(encoding="utf-8"))
+        existing_data = parse_env(path.read_text(encoding="utf-8"))
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{ENV_ID}={api_id}", f"{ENV_HASH}={api_hash}"]
-    for key in PROXY_KEYS:
-        if key in existing_data:
-            lines.append(f"{key}={existing_data[key]}")
+    for key, value in existing_data.items():
+        if key not in (ENV_ID, ENV_HASH):
+            lines.append(f"{key}={value}")
     content = "\n".join(lines) + "\n"
     path.write_text(content, encoding="utf-8")
 
@@ -188,34 +212,21 @@ def _write_env(path: Path, api_id: int, api_hash: str) -> None:
 def resolve_credentials(
     path: Path | str | None = None,
     *,
-    cache: Path | str | None = None,
     environ: Mapping[str, str] = os.environ,
-    input_fn: Any = input,
+    input_fn: Callable[[str], str] = input,
 ) -> tuple[int, str]:
     if ENV_ID in environ and ENV_HASH in environ:
         return int(environ[ENV_ID]), str(environ[ENV_HASH])
 
     target_path = Path(path) if path is not None else env_path()
-    cache_file = Path(cache) if cache is not None else cache_path()
 
     if target_path.is_file():
         try:
             content = target_path.read_text(encoding="utf-8")
-            data = _parse_env(content)
+            data = parse_env(content)
             if ENV_ID in data and ENV_HASH in data:
                 return int(data[ENV_ID]), data[ENV_HASH]
         except (ValueError, OSError):
-            pass
-    elif cache_file.is_file():
-        try:
-            content = cache_file.read_text(encoding="utf-8")
-            data = json.loads(content)
-            if isinstance(data, dict) and "API_ID" in data and "API_HASH" in data:
-                api_id = int(data["API_ID"])
-                api_hash = str(data["API_HASH"])
-                _write_env(target_path, api_id, api_hash)
-                return api_id, api_hash
-        except (json.JSONDecodeError, ValueError, TypeError, OSError):
             pass
 
     api_id = int(input_fn("Введите ваш Telegram API ID: "))
@@ -234,7 +245,7 @@ def _load_proxy_source(
     target_path = Path(path) if path is not None else env_path()
     if not target_path.is_file():
         return None
-    file_data = _parse_env(target_path.read_text(encoding="utf-8"))
+    file_data = parse_env(target_path.read_text(encoding="utf-8"))
     file_proxy = {
         k: file_data[k].strip()
         for k in PROXY_KEYS
@@ -293,26 +304,15 @@ def resolve_proxy(
     return proxy
 
 
-def restore_client_loop(app: Any) -> None:
-    """prompt_toolkit (questionary) подменяет thread loop через asyncio.run().
-
-    Синхронные вызовы Pyrogram и client.stop() требуют loop клиента —
-    вызывайте после любых промптов внутри блока telegram_client.
-    """
-    loop = getattr(app, "loop", None)
-    if loop is not None and not loop.is_closed():
-        asyncio.set_event_loop(loop)
-
-
 @contextmanager
 def telegram_client(
     session_name: str,
     *,
     workdir: Path | str | None = None,
-    client_factory: Any = Client,
+    client_factory: Callable[..., Any] = Client,
     environ: Mapping[str, str] = os.environ,
     env_file: Path | str | None = None,
-):
+) -> Iterator[Any]:
     api_id, api_hash = resolve_credentials(env_file, environ=environ)
     proxy = resolve_proxy(env_file, environ=environ)
     # Python 3.12+ / questionary: prompt_toolkit's asyncio.run() clears the thread
@@ -331,6 +331,9 @@ def telegram_client(
         logging.info(
             f"Соединение с Telegram через прокси {proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
         )
+    def _sync_loop() -> None:
+        asyncio.set_event_loop(asyncio.new_event_loop() if loop.is_closed() else loop)
+
     try:
         with client_factory(
             session_name,
@@ -339,9 +342,12 @@ def telegram_client(
             proxy=proxy,
             workdir=target_workdir,
         ) as app:
-            yield app
+            try:
+                yield app
+            finally:
+                # Вернуть loop клиента ДО app.stop() в __exit__: после последнего
+                # questionary-диалога thread loop — закрытый loop asyncio.run(),
+                # и gather задач диспетчера падает с «attached to a different loop».
+                _sync_loop()
     finally:
-        if loop.is_closed():
-            asyncio.set_event_loop(asyncio.new_event_loop())
-        else:
-            asyncio.set_event_loop(loop)
+        _sync_loop()

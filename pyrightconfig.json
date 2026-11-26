@@ -1,0 +1,29 @@
+{
+  "typeCheckingMode": "standard",
+  "include": [
+    "*.py",
+    "tests"
+  ],
+  "exclude": [
+    ".venv",
+    "sessions"
+  ],
+  "reportMissingTypeStubs": false,
+  "reportPrivateImportUsage": false,
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "reportArgumentType": "none",
+      "extraPaths": [
+        "."
+      ]
+    },
+    {
+      "root": ".",
+      "extraPaths": [
+        "."
+      ]
+    }
+  ],
+  "reportUnusedCoroutine": false
+}

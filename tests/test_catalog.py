@@ -3,6 +3,7 @@
 import unittest
 
 from pyrogram import enums
+from pyrogram.errors import RPCError
 
 from catalog import (
     ALL,
@@ -10,6 +11,7 @@ from catalog import (
     ALL_PRIVATE,
     ALL_PUBLIC,
     chat_label,
+    prompt_selection,
     select_from_dialogs,
 )
 
@@ -232,6 +234,25 @@ class SelectFromDialogsTests(unittest.TestCase):
         )
         self.assertEqual(res_none, [])
         self.assertIn("Нет чатов для выбора.", log_none)
+
+
+class ArchiveAbortTests(unittest.TestCase):
+    def test_archive_error_cancels_target_chat_selection(self):
+        class App:
+            def get_dialogs(self, from_archive=None):
+                if from_archive:
+                    raise RPCError("archive down")
+                return [FakeDialog(FakeChat(1, "Group", username="g"))]
+
+        asked = []
+        result = prompt_selection(
+            App(),
+            ask=asked.append,
+            confirm=lambda msg: True,
+            log=lambda *_: None,
+        )
+        self.assertEqual(result, [])
+        self.assertEqual(asked, [])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,12 @@ sessions/
 # Кэш
 cache
 cache.json
+.ruff_cache/
 
+# Выгрузки участников и сортировка чатов
+people_*.csv
+sort-*.md
+sort-*.cache.json
 # Сертификаты
 cert.crt
 cert.key
@@ -24,6 +29,7 @@ cert.key
 
 # AI-инструменты
 .ai
+.omp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

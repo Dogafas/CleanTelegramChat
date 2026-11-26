@@ -1,13 +1,13 @@
 """Checks for session logic: sessions dir, credentials, proxy, prompt menu, telegram_client."""
 
 import asyncio
-import json
 import logging
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 
+import session
 from session import (
     ALL_SESSIONS,
     CANCEL_SESSION,
@@ -19,7 +19,6 @@ from session import (
     prompt_sessions,
     resolve_credentials,
     resolve_proxy,
-    restore_client_loop,
     sessions_dir,
     telegram_client,
 )
@@ -31,10 +30,25 @@ class ResolveCredentialsTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp_path = Path(tmp.name)
         self.env_path = self.tmp_path / ".env"
-        self.cache_path = self.tmp_path / "cache.json"
 
+    def test_write_env_preserves_typesafe_keys(self):
+        self.env_path.write_text(
+            "TYPESAFE_API_KEY=sk-or-test\nTYPESAFE_BASE_URL=https://openrouter.ai/api\nCATEGORIES_FILE=cats.txt\n",
+            encoding="utf-8",
+        )
+        session._write_env(self.env_path, 1, "hash")
+        content = self.env_path.read_text(encoding="utf-8")
+        self.assertIn("TYPESAFE_API_KEY=sk-or-test", content)
+        self.assertIn("TYPESAFE_BASE_URL=https://openrouter.ai/api", content)
+        self.assertIn("CATEGORIES_FILE=cats.txt", content)
+
+    def test_parse_env_reads_typesafe_and_sort_keys(self):
+        raw = "TYPESAFE_API_KEY=abc\nCATEGORIES_FILE=my.txt\nTELEGRAM_API_ID=1\n"
+        data = session.parse_env(raw)
+        self.assertEqual(data["TYPESAFE_API_KEY"], "abc")
+        self.assertEqual(data["CATEGORIES_FILE"], "my.txt")
     def test_all_sources(self):
-        env_path, cache_path = self.env_path, self.cache_path
+        env_path = self.env_path
 
         # (a) both env vars "123"/"abc" -> (123, "abc"), input_fn never called, no .env created
         with self.subTest(case="a"):
@@ -42,7 +56,6 @@ class ResolveCredentialsTests(unittest.TestCase):
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={"TELEGRAM_API_ID": "123", "TELEGRAM_API_HASH": "abc"},
                     input_fn=lambda *a, **k: calls.append(1) or "",
                 ),
@@ -59,7 +72,6 @@ class ResolveCredentialsTests(unittest.TestCase):
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
                     input_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted")),
                 ),
@@ -67,70 +79,39 @@ class ResolveCredentialsTests(unittest.TestCase):
             )
             self.assertEqual(env_path.read_text(encoding="utf-8"), content_b)
 
-        # (c) no .env, cache.json {"API_ID": 42, "API_HASH": "zzz"} -> (42, "zzz"), no input_fn,
-        # .env now exists and contains both TELEGRAM_ keys,
-        # cache.json still on disk with original JSON
+        # (c) no .env -> prompt answers 77/secret, .env written with both keys
         with self.subTest(case="c"):
             env_path.unlink()
-            cache_raw_c = json.dumps({"API_ID": 42, "API_HASH": "zzz"})
-            cache_path.write_text(cache_raw_c, encoding="utf-8")
+            answers_c = iter(["77", "secret"])
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
-                    input_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted")),
-                ),
-                (42, "zzz"),
-            )
-            self.assertTrue(env_path.is_file())
-            env_c = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=42", env_c)
-            self.assertIn("TELEGRAM_API_HASH=zzz", env_c)
-            self.assertEqual(cache_path.read_text(encoding="utf-8"), cache_raw_c)
-
-        # (d) neither file exists -> prompt answers 77/secret, .env written with both keys,
-        # cache.json not created
-        with self.subTest(case="d"):
-            env_path.unlink()
-            cache_path.unlink()
-            answers_d = iter(["77", "secret"])
-            self.assertEqual(
-                resolve_credentials(
-                    env_path,
-                    cache=cache_path,
-                    environ={},
-                    input_fn=lambda *a, **k: next(answers_d),
+                    input_fn=lambda *a, **k: next(answers_c),
                 ),
                 (77, "secret"),
             )
             self.assertTrue(env_path.is_file())
-            env_d = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=77", env_d)
-            self.assertIn("TELEGRAM_API_HASH=secret", env_d)
-            self.assertFalse(cache_path.exists())
+            env_c = env_path.read_text(encoding="utf-8")
+            self.assertIn("TELEGRAM_API_ID=77", env_c)
+            self.assertIn("TELEGRAM_API_HASH=secret", env_c)
 
-        # (e) .env exists but has only TELEGRAM_API_ID (no hash) next to a valid cache.json ->
-        # cache.json NOT used (input_fn IS called), .env overwritten with prompted values
-        with self.subTest(case="e"):
+        # (d) .env exists but has only TELEGRAM_API_ID (no hash) ->
+        # input_fn called, .env overwritten with prompted values
+        with self.subTest(case="d"):
             env_path.write_text("TELEGRAM_API_ID=999\n", encoding="utf-8")
-            cache_raw_e = json.dumps({"API_ID": 888, "API_HASH": "from_cache"})
-            cache_path.write_text(cache_raw_e, encoding="utf-8")
-            answers_e = iter(["55", "new_hash"])
+            answers_d = iter(["55", "new_hash"])
             self.assertEqual(
                 resolve_credentials(
                     env_path,
-                    cache=cache_path,
                     environ={},
-                    input_fn=lambda *a, **k: next(answers_e),
+                    input_fn=lambda *a, **k: next(answers_d),
                 ),
                 (55, "new_hash"),
             )
-            env_e = env_path.read_text(encoding="utf-8")
-            self.assertIn("TELEGRAM_API_ID=55", env_e)
-            self.assertIn("TELEGRAM_API_HASH=new_hash", env_e)
-            self.assertEqual(cache_path.read_text(encoding="utf-8"), cache_raw_e)
-
+            env_d = env_path.read_text(encoding="utf-8")
+            self.assertIn("TELEGRAM_API_ID=55", env_d)
+            self.assertIn("TELEGRAM_API_HASH=new_hash", env_d)
 
 class ResolveProxySourceTests(unittest.TestCase):
     def setUp(self):
@@ -189,6 +170,7 @@ class ResolveProxySourceTests(unittest.TestCase):
                 "password": "pass",
             },
         )
+        assert res3 is not None
         self.assertIsInstance(res3["port"], int)
 
     def test_schemes_normalized_to_lowercase(self):
@@ -298,9 +280,9 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.tmp_path = Path(tmp.name)
 
     def test_corrupted_env_preserves_proxy_lines(self):
-        # 10. Corrupted .env (TELEGRAM_API_ID=999, no hash) with 3 valid proxy lines,
-        # valid cache.json nearby: credentials prompted, .env rewritten with new credentials
-        # and preserves same 3 proxy lines, cache.json unchanged
+        # 10. Corrupted .env (TELEGRAM_API_ID=999, no hash) with 3 valid proxy lines:
+        # credentials prompted, .env rewritten with new credentials
+        # and preserves same 3 proxy lines
         p10 = self.tmp_path / "env10.env"
         p10.write_text(
             "TELEGRAM_API_ID=999\n"
@@ -309,14 +291,10 @@ class ProxyIntegrationTests(unittest.TestCase):
             "TELEGRAM_PROXY_PORT=1080\n",
             encoding="utf-8",
         )
-        c10 = self.tmp_path / "cache10.json"
-        raw_c10 = json.dumps({"API_ID": 888, "API_HASH": "from_cache"})
-        c10.write_text(raw_c10, encoding="utf-8")
         answers_10 = iter(["55", "new_hash"])
         self.assertEqual(
             resolve_credentials(
                 p10,
-                cache=c10,
                 environ={},
                 input_fn=lambda *a, **k: next(answers_10),
             ),
@@ -328,7 +306,6 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn("TELEGRAM_PROXY_SCHEME=socks5", content_10)
         self.assertIn("TELEGRAM_PROXY_HOSTNAME=127.0.0.1", content_10)
         self.assertIn("TELEGRAM_PROXY_PORT=1080", content_10)
-        self.assertEqual(c10.read_text(encoding="utf-8"), raw_c10)
 
     def test_client_logs_host_but_not_password(self):
         # 11. telegram_client: factory records kwargs and yields itself as context manager.
@@ -488,6 +465,23 @@ class PromptSessionsTests(unittest.TestCase):
         res = prompt_sessions(root, ask_select=lambda _msg, _choices: ALL_SESSIONS)
         self.assertEqual(res, ["acc1", "acc2"])
 
+    def test_select_allow_all_false(self):
+        root = self.tmp_path / "prompt_no_all_root"
+        sdir = sessions_dir(root)
+        (sdir / "acc1.session").write_text("1", encoding="utf-8")
+        (sdir / "acc2.session").write_text("2", encoding="utf-8")
+
+        passed_choices: list[Any] = []
+
+        def fake_select(_msg: str, choices: list[Any]) -> Any:
+            passed_choices.extend(choices)
+            return "acc1"
+
+        res = prompt_sessions(root, allow_all=False, ask_select=fake_select)
+        self.assertEqual(res, ["acc1"])
+        self.assertNotIn(("Все сессии", ALL_SESSIONS), passed_choices)
+        self.assertIn(("acc1", "acc1"), passed_choices)
+        self.assertIn(("acc2", "acc2"), passed_choices)
     def test_create_and_delete_flows(self):
         root = self.tmp_path / "prompt_create_del_root"
         sdir = sessions_dir(root)
@@ -545,7 +539,7 @@ class TelegramClientTests(unittest.TestCase):
                 self.args = args
                 self.kwargs = kwargs
 
-            def __enter__(self) -> "DummyRecordingClient":
+            def __enter__(self) -> DummyRecordingClient:
                 return self
 
             def __exit__(self, *args: Any) -> None:
@@ -577,7 +571,7 @@ class TelegramClientTests(unittest.TestCase):
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.dispatcher_loop = asyncio.get_event_loop()
 
-            def __enter__(self) -> "NoopClient":
+            def __enter__(self) -> NoopClient:
                 return self
 
             def __exit__(self, *args: Any) -> None:
@@ -609,28 +603,37 @@ class TelegramClientTests(unittest.TestCase):
         finally:
             asyncio.set_event_loop(old_loop)
 
-    def test_restore_client_loop(self):
+    def test_syncs_loop_before_client_exit(self):
+        class LoopAssertingClient:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.init_loop = asyncio.get_event_loop()
+
+            def __enter__(self) -> LoopAssertingClient:
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                # Pyrogram Client.stop(): собирает задачи диспетчера на текущем loop
+                self.exit_loop = asyncio.get_event_loop()
+
+        env = {"TELEGRAM_API_ID": "1", "TELEGRAM_API_HASH": "h"}
         old_loop = asyncio.get_event_loop()
         try:
-            client_loop = asyncio.new_event_loop()
-            app = type("FakeApp", (), {"loop": client_loop})()
-
-            # Симулируем вопросary: thread loop подменён и закрыт
-            stolen = asyncio.new_event_loop()
-            stolen.close()
-            asyncio.set_event_loop(stolen)
-
-            restore_client_loop(app)
-            self.assertIs(asyncio.get_event_loop(), client_loop)
-
-            # app без loop / с закрытым loop — не падает, ставит рабочий loop
-            restore_client_loop(object())
-            restore_client_loop(type("FakeApp2", (), {"loop": stolen})())
+            with telegram_client(
+                session_name="s",
+                workdir=self.tmp_path,
+                client_factory=LoopAssertingClient,
+                environ=env,
+            ) as app:
+                # Симулируем последний questionary-диалог: asyncio.run() закрыл
+                # свой loop и оставил его thread loop-ом
+                stolen = asyncio.new_event_loop()
+                stolen.close()
+                asyncio.set_event_loop(stolen)
+            # stop() в __exit__ должен выполняться на loop клиента, не на «stolen»
+            self.assertIs(app.exit_loop, app.init_loop)
             self.assertFalse(asyncio.get_event_loop().is_closed())
         finally:
             asyncio.set_event_loop(old_loop)
-            client_loop.close()
-
 
 if __name__ == "__main__":
     unittest.main()

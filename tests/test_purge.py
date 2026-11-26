@@ -5,7 +5,7 @@ import unittest
 from pyrogram import enums
 from pyrogram.errors import FloodWait
 
-from purge import purge_chat, purge_chats
+from purge import purge_chat, purge_chats, retry_on_flood
 
 
 class FakeChat:
@@ -98,6 +98,53 @@ class PurgeChatsTests(unittest.TestCase):
             sleeps, [25.0], f"expected exactly one chat_pause between chats, got {sleeps}"
         )
         self.assertIn("Удаление сообщений из чата: two", " ".join(logs))
+
+
+class RetryOnFloodTests(unittest.TestCase):
+    def test_exhausts_attempts_and_returns_error(self):
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def always_flood():
+            calls["n"] += 1
+            raise FloodWait(2)
+
+        val, err = retry_on_flood(
+            always_flood,
+            sleep=sleeps.append,
+            rng=lambda a, b: 0.0,
+            max_attempts=3,
+            log=lambda *_: None,
+        )
+        self.assertIsNone(val)
+        self.assertIsInstance(err, FloodWait)
+        self.assertEqual(calls["n"], 3)
+        self.assertEqual(len(sleeps), 2)  # 2 паузы между 3 попытками
+
+    def test_non_flood_exception_does_not_retry(self):
+        calls = {"n": 0}
+        sleeps: list[float] = []
+
+        def fails_fast():
+            calls["n"] += 1
+            raise ValueError("bad input")
+
+        val, err = retry_on_flood(fails_fast, sleep=sleeps.append, max_attempts=5)
+        self.assertIsNone(val)
+        self.assertIsInstance(err, ValueError)
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(sleeps, [])
+
+    def test_zero_attempts_never_calls_op(self):
+        calls: list[int] = []
+
+        val, err = retry_on_flood(
+            lambda: calls.append(1), sleep=None, max_attempts=0, log=lambda *_: None
+        )
+        self.assertIsNone(val)
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("max_attempts=0", str(err))
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
